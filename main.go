@@ -1,4 +1,4 @@
-package main
+package imageickcf
 
 import (
 	"cloud.google.com/go/storage"
@@ -32,7 +32,8 @@ func init() {
 }
 
 func ReceiveHttp(w http.ResponseWriter, r *http.Request) {
-	name := strings.Split(r.URL.Path, "/")[0]
+	log.Println(r.URL.Path)
+	name := strings.TrimPrefix(r.URL.Path, "/")
 	existFileReader, err := bucket.Object(name).NewReader(context.Background())
 	if err == nil {
 		defer existFileReader.Close()
