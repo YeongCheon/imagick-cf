@@ -8,8 +8,14 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 )
+
+type optimizeOption struct {
+	Format   string
+	IsReduce bool
+}
 
 const (
 	bucketName          = "BUCKET_NAME"
@@ -37,6 +43,7 @@ func imageProcess(
 	ctx context.Context,
 	originalImageName,
 	outputImageName string,
+	optimizeOption *optimizeOption,
 ) (*storage.ObjectHandle, error) {
 	originalImage := bucket.Object(originalImageName)
 	r, err := originalImage.NewReader(context.Background())
@@ -48,8 +55,17 @@ func imageProcess(
 	w := resultImage.NewWriter(ctx)
 	defer w.Close()
 
+	convertArgs := []string{}
+	if optimizeOption.IsReduce {
+		convertArgs = append(convertArgs, "-strip", "-interlace", "Plane", "-gaussian-blur", "0.05", "-quality", "85%")
+	}
+
+	if optimizeOption.Format != "" {
+		convertArgs = append(convertArgs, "-", optimizeOption.Format+":-")
+	}
+
 	// Use - as input and output to use stdin and stdout.
-	cmd := exec.Command("convert", "-strip", "-interlace", "Plane", "-gaussian-blur", "0.05", "-quality", "85%", "-", "-")
+	cmd := exec.Command("convert", convertArgs...)
 	cmd.Stdin = r
 	cmd.Stdout = w
 
@@ -61,7 +77,15 @@ func imageProcess(
 }
 
 func ReceiveHttp(w http.ResponseWriter, r *http.Request) {
-	log.Println(r.URL.Path)
+	query := r.URL.Query()
+	format := query.Get("format")
+	isOptimize, isOk := strconv.ParseBool(query.Get("optimize"))
+
+	option := &optimizeOption{
+		Format:   format,
+		IsReduce: isOptimize && isOk == nil,
+	}
+
 	imageName := strings.TrimPrefix(r.URL.Path, "/")
 	optimizedFileName := strings.Join([]string{optimizedFilePrefix, imageName}, "/")
 
@@ -70,7 +94,7 @@ func ReceiveHttp(w http.ResponseWriter, r *http.Request) {
 		defer existFileReader.Close()
 		io.Copy(w, existFileReader)
 	} else {
-		result, err := imageProcess(context.Background(), imageName, optimizedFileName)
+		result, err := imageProcess(context.Background(), imageName, optimizedFileName, option)
 		if err != nil {
 			log.Fatal(err)
 		}
