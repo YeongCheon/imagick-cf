@@ -3,6 +3,8 @@ package imageickcf
 import (
 	"cloud.google.com/go/storage"
 	"context"
+	"crypto/sha1"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -15,6 +17,38 @@ import (
 type optimizeOption struct {
 	Format   string
 	IsReduce bool
+}
+
+func (option *optimizeOption) getHash(originalFileName string) string {
+	h := sha1.New()
+
+	s := strings.Join([]string{
+		originalFileName,
+		strconv.FormatBool(option.IsReduce),
+		option.Format,
+	},
+		"",
+	)
+
+	h.Write([]byte(s))
+
+	return fmt.Sprintf("%x", h.Sum(nil))
+}
+
+func (option *optimizeOption) getFilename(originalFileName string) string {
+	var result string
+	if option.Format == "" {
+		arr := strings.Split(originalFileName, ".")
+		if len(arr) > 1 {
+			result = option.getHash(originalFileName) + "." + arr[len(arr)-1]
+		} else {
+			result = option.getHash(originalFileName)
+		}
+	} else {
+		result = option.getHash(originalFileName) + "." + option.Format
+	}
+
+	return result
 }
 
 const (
@@ -62,6 +96,8 @@ func imageProcess(
 
 	if optimizeOption.Format != "" {
 		convertArgs = append(convertArgs, "-", optimizeOption.Format+":-")
+	} else {
+		convertArgs = append(convertArgs, "-", "-")
 	}
 
 	// Use - as input and output to use stdin and stdout.
@@ -77,6 +113,7 @@ func imageProcess(
 }
 
 func ReceiveHttp(w http.ResponseWriter, r *http.Request) {
+	imageName := strings.TrimPrefix(r.URL.Path, "/")
 	query := r.URL.Query()
 	format := query.Get("format")
 	isOptimize, isOk := strconv.ParseBool(query.Get("optimize"))
@@ -86,8 +123,7 @@ func ReceiveHttp(w http.ResponseWriter, r *http.Request) {
 		IsReduce: isOptimize && isOk == nil,
 	}
 
-	imageName := strings.TrimPrefix(r.URL.Path, "/")
-	optimizedFileName := strings.Join([]string{optimizedFilePrefix, imageName}, "/")
+	optimizedFileName := strings.Join([]string{optimizedFilePrefix, option.getFilename(imageName)}, "/")
 
 	existFileReader, err := bucket.Object(optimizedFileName).NewReader(context.Background())
 	if err == nil {
