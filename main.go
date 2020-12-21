@@ -14,6 +14,24 @@ import (
 	"strings"
 )
 
+const (
+	bucketName          = "BUCKET_NAME"
+	optimizedFilePrefix = "optimize"
+)
+
+var (
+	proejctId         = os.Getenv("GOOGLE_CLOUD_PROJECT")
+	storageClient     *storage.Client
+	bucket            *storage.BucketHandle
+	allowedFormatList = []string{
+		"jpg",
+		"jpeg",
+		"gif",
+		"png",
+		"webp",
+	}
+)
+
 type optimizeOption struct {
 	Format   string
 	IsReduce bool
@@ -50,17 +68,6 @@ func (option *optimizeOption) getFilename(originalFileName string) string {
 
 	return result
 }
-
-const (
-	bucketName          = "BUCKET_NAME"
-	optimizedFilePrefix = "optimize"
-)
-
-var (
-	proejctId     = os.Getenv("GOOGLE_CLOUD_PROJECT")
-	storageClient *storage.Client
-	bucket        *storage.BucketHandle
-)
 
 func init() {
 	var err error
@@ -118,6 +125,10 @@ func ReceiveHttp(w http.ResponseWriter, r *http.Request) {
 	format := query.Get("format")
 	isOptimize, isOk := strconv.ParseBool(query.Get("optimize"))
 
+	if !contains(allowedFormatList, format) {
+		format = ""
+	}
+
 	option := &optimizeOption{
 		Format:   format,
 		IsReduce: isOptimize && isOk == nil,
@@ -139,4 +150,14 @@ func ReceiveHttp(w http.ResponseWriter, r *http.Request) {
 
 		io.Copy(w, resultReader)
 	}
+}
+
+func contains(arr []string, value string) bool {
+	for _, item := range arr {
+		if item == value {
+			return true
+		}
+	}
+
+	return false
 }
