@@ -35,6 +35,8 @@ var (
 type optimizeOption struct {
 	Format   string
 	IsReduce bool
+	Width    int
+	Height   int
 }
 
 func (option *optimizeOption) getHash(originalFileName string) string {
@@ -44,6 +46,8 @@ func (option *optimizeOption) getHash(originalFileName string) string {
 		originalFileName,
 		strconv.FormatBool(option.IsReduce),
 		option.Format,
+		strconv.Itoa(option.Width),
+		strconv.Itoa(option.Height),
 	},
 		"",
 	)
@@ -101,6 +105,14 @@ func imageProcess(
 		convertArgs = append(convertArgs, "-strip", "-interlace", "Plane", "-gaussian-blur", "0.05", "-quality", "85%")
 	}
 
+	width := strconv.Itoa(optimizeOption.Width)
+	height := strconv.Itoa(optimizeOption.Height)
+	if optimizeOption.Width > 0 && optimizeOption.Height <= 0 {
+		convertArgs = append(convertArgs, "-resize", width)
+	} else if optimizeOption.Width > 0 && optimizeOption.Height > 0 {
+		convertArgs = append(convertArgs, "-resize", width+"x"+height+"!")
+	}
+
 	if optimizeOption.Format != "" {
 		convertArgs = append(convertArgs, "-", optimizeOption.Format+":-")
 	} else {
@@ -124,6 +136,8 @@ func ReceiveHttp(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 	format := query.Get("format")
 	isOptimize, isOk := strconv.ParseBool(query.Get("optimize"))
+	width, _ := strconv.Atoi(query.Get("width"))
+	height, _ := strconv.Atoi(query.Get("height"))
 
 	if !contains(allowedFormatList, format) {
 		format = ""
@@ -132,6 +146,8 @@ func ReceiveHttp(w http.ResponseWriter, r *http.Request) {
 	option := &optimizeOption{
 		Format:   format,
 		IsReduce: isOptimize && isOk == nil,
+		Width:    width,
+		Height:   height,
 	}
 
 	optimizedFileName := strings.Join([]string{optimizedFilePrefix, option.getFilename(imageName)}, "/")
