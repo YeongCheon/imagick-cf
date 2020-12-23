@@ -84,6 +84,32 @@ func init() {
 	bucket = storageClient.Bucket(bucketName)
 }
 
+func gif2mp4(
+	ctx context.Context,
+	originalImageName string,
+	outputImageName string,
+) (*storage.ObjectHandle, error) {
+	originalImage := bucket.Object(originalImageName)
+	r, err := originalImage.NewReader(context.Background())
+	if err != nil {
+		return nil, err
+	}
+
+	resultImage := bucket.Object(outputImageName)
+	w := resultImage.NewWriter(ctx)
+	defer w.Close()
+
+	cmd := exec.Command("ffmpeg", "-f", "image2pipe", "-i", "-", "-movflags", "faststart", "-pix_fmt", "yuv420p", "-c:a", "aac", "-vf", "\"scale=trunc(iw/2)*2:trunc(ih/2)*2\"", "-f", "ismv", "-")
+	cmd.Stdin = r
+	cmd.Stdout = w
+
+	if err := cmd.Run(); err != nil {
+		return nil, err
+	}
+
+	return resultImage, nil
+}
+
 func imageProcess(
 	ctx context.Context,
 	originalImageName,
