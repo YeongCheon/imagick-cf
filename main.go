@@ -13,6 +13,14 @@ import (
 	"strconv"
 	"strings"
 	"bytes"
+
+	"image"
+	"image/gif"
+	"image/jpeg"
+	"image/png"
+	"github.com/chai2010/webp"
+	"golang.org/x/image/tiff"
+	"golang.org/x/image/bmp"
 )
 
 const (
@@ -89,6 +97,7 @@ func init() {
 	bucket = storageClient.Bucket(bucketName)
 }
 
+// deprecated
 func gif2mp4(
 	ctx context.Context,
 	originalImageName string,
@@ -110,19 +119,72 @@ func gif2mp4(
 	defer w.Close()
 	var stderr bytes.Buffer
 
-	cmd := exec.Command("./ffmpeg", "-f", "image2pipe", "-i", "pipe:0", "-movflags", "faststart", "-pix_fmt", "yuv420p", "-c:a", "aac", "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2", "-f", "ismv", "pipe:1")
+	cmd := exec.Command("ffmpeg", "-f", "image2pipe", "-i", "pipe:0", "-movflags", "faststart", "-pix_fmt", "yuv420p", "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2", "-f", "ismv", "pipe:1")
 	cmd.Stdin = r
 	cmd.Stdout = w
 	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
+		log.Println(stderr.String())
 		return nil, err
 	}
 
 	return resultImage, nil
 }
 
-func imageProcess(
+
+// original: https://github.com/dawnlabs/photosorcery/blob/master/convert.go
+func convertImage(
+	ctx context.Context,
+	originalImageName,
+	outputImageName string,
+	optimizeOption *optimizeOption,
+) (*storage.ObjectHandle, error) {
+	originalImage := bucket.Object(originalImageName)
+	r, err := originalImage.NewReader(context.Background())
+	if err != nil {
+		return nil, err
+	}
+
+	img, _, err := image.Decode(r)
+	if err != nil {
+		return nil, err
+	}
+
+	resultImage := bucket.Object(outputImageName)
+	w := resultImage.NewWriter(ctx)
+	defer w.Close()
+
+	fileType := getFileType(optimizeOption.Format)
+	switch fileType {
+	case JPG:
+		err = jpeg.Encode(w, img, nil)
+	case PNG:
+		err = png.Encode(w, img)
+	case WEBP:
+		err = webp.Encode(w, img, nil)
+	case GIF:
+		err = gif.Encode(w, img, nil)
+	case BMP:
+		err = bmp.Encode(w, img)
+	case TIFF:
+		err = tiff.Encode(w, img, nil)
+	}
+
+	if err != nil {
+		return originalImage, nil
+		// return nil, err
+	}
+
+	err = webp.Encode(w, img, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return resultImage, nil
+}
+
+func imageProcess( //using imagick
 	ctx context.Context,
 	originalImageName,
 	outputImageName string,
@@ -139,6 +201,7 @@ func imageProcess(
 	defer w.Close()
 
 	convertArgs := []string{}
+	convertArgs = append(convertArgs, "-") // input stream
 	if optimizeOption.IsReduce {
 		convertArgs = append(convertArgs, "-strip", "-interlace", "Plane", "-gaussian-blur", "0.05", "-quality", "85%")
 	}
@@ -152,17 +215,20 @@ func imageProcess(
 	}
 
 	if optimizeOption.Format != "" {
-		convertArgs = append(convertArgs, "-", optimizeOption.Format+":-")
+		convertArgs = append(convertArgs, optimizeOption.Format+":-")
 	} else {
-		convertArgs = append(convertArgs, "-", "-")
+		convertArgs = append(convertArgs, "-")
 	}
 
+	var stderr bytes.Buffer
 	// Use - as input and output to use stdin and stdout.
 	cmd := exec.Command("convert", convertArgs...)
 	cmd.Stdin = r
 	cmd.Stdout = w
+	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
+		log.Println(stderr.String())
 		return nil, err
 	}
 
@@ -209,7 +275,8 @@ func ReceiveHttp(w http.ResponseWriter, r *http.Request) {
 		if isGif {
 			result, err = gif2mp4(context.Background(), imageName, optimizedFileName)
 		} else {
-			result, err = imageProcess(context.Background(), imageName, optimizedFileName, option)
+			// result, err = imageProcess(context.Background(), imageName, optimizedFileName, option)
+			result, err = convertImage(context.Background(), imageName, optimizedFileName, option)
 		}		
 		
 		if err != nil {
@@ -231,4 +298,35 @@ func contains(arr []string, value string) bool {
 	}
 
 	return false
+}
+
+type FileType int
+
+const (
+	PNG FileType = iota
+	JPG
+	GIF
+	WEBP
+	BMP
+	TIFF
+	ERR
+)
+
+func getFileType(input string) FileType {
+	switch input {
+	case "jpg":
+		fallthrough
+	case "jpeg":
+		return JPG
+	case "gif":
+		return GIF
+	case "bmp":
+		return BMP
+	case "webp":
+		return WEBP
+	case "tiff":
+		return TIFF
+	default:
+		return ERR
+	}
 }
