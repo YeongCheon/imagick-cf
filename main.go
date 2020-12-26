@@ -38,6 +38,8 @@ var (
 		"gif",
 		"png",
 		"webp",
+		"bmp",
+		"tiff",
 	}
 )
 
