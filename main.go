@@ -185,12 +185,10 @@ func imageResize(
 ) error {
 	convertArgs := []string{}
 	convertArgs = append(convertArgs, "-") // input stream
-	if optimizeOption.IsReduce {
-		convertArgs = append(convertArgs, "-strip", "-interlace", "Plane", "-gaussian-blur", "0.05", "-quality", "85%")
-	}
 
 	width := strconv.Itoa(optimizeOption.Width)
 	height := strconv.Itoa(optimizeOption.Height)
+
 	if optimizeOption.Width > 0 && optimizeOption.Height <= 0 {
 		convertArgs = append(convertArgs, "-resize", width)
 	} else if optimizeOption.Width > 0 && optimizeOption.Height > 0 {
@@ -308,16 +306,33 @@ func ReceiveHttp(w http.ResponseWriter, r *http.Request) {
 			log.Fatal(err)
 		}
 
-		var buffer bytes.Buffer
-		bufferWriter := bufio.NewWriter(&buffer)
-		bufferReader := bufio.NewReader(&buffer)
+		var resultImageBuffer bytes.Buffer
+		resultImageBufferWriter := bufio.NewWriter(&resultImageBuffer)
+		resultBufferReader := bufio.NewReader(&resultImageBuffer)
 		
 		if isGif {
 			_, err = gif2mp4(context.Background(), imageName, optimizedFileName)
 		} else {
 			// result, err = imageProcess(context.Background(), imageName, optimizedFileName, option)
-			err = convertImage(context.Background(), originalImageReader, bufferWriter, option)
-			// imageResize(context.Background(), bufferReader, bufferWriter, option)
+			var resizeImageBuffer bytes.Buffer
+			resizeImageBufferWriter := bufio.NewWriter(&resizeImageBuffer)
+			resizeBufferReader := bufio.NewReader(&resizeImageBuffer)
+
+			err = imageResize(context.Background(), originalImageReader, resizeImageBufferWriter, option) // warning: this function must be first. if not, result buffer bytes size is zero.
+			if err != nil {
+				log.Fatal(err)
+			}
+			
+			var convertImageBuffer bytes.Buffer
+			convertImageBufferWriter := bufio.NewWriter(&convertImageBuffer)
+			convertBufferReader := bufio.NewReader(&convertImageBuffer)
+			
+			err = convertImage(context.Background(), resizeBufferReader, convertImageBufferWriter, option)
+			if err != nil {
+				log.Fatal(err)
+			}
+
+			io.Copy(resultImageBufferWriter, convertBufferReader)
 		}		
 		
 		if err != nil {
@@ -327,7 +342,7 @@ func ReceiveHttp(w http.ResponseWriter, r *http.Request) {
 		gcsFileWriter := existFileObject.NewWriter(context.Background())
 		defer gcsFileWriter.Close()
 
-		result := io.TeeReader(bufferReader, gcsFileWriter)
+		result := io.TeeReader(resultBufferReader, gcsFileWriter)
 		io.Copy(w, result)
 	}
 }
