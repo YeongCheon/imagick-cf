@@ -21,6 +21,7 @@ import (
 	"github.com/chai2010/webp"
 	"golang.org/x/image/tiff"
 	"golang.org/x/image/bmp"
+	"bufio"
 )
 
 const (
@@ -138,24 +139,14 @@ func gif2mp4(
 // original: https://github.com/dawnlabs/photosorcery/blob/master/convert.go
 func convertImage(
 	ctx context.Context,
-	originalImageName,
-	outputImageName string,
+	r io.Reader,
+	w io.Writer,
 	optimizeOption *optimizeOption,
-) (*storage.ObjectHandle, error) {
-	originalImage := bucket.Object(originalImageName)
-	r, err := originalImage.NewReader(context.Background())
-	if err != nil {
-		return nil, err
-	}
-
+) error {
 	img, _, err := image.Decode(r)
 	if err != nil {
-		return nil, err
+		return err
 	}
-
-	resultImage := bucket.Object(outputImageName)
-	w := resultImage.NewWriter(ctx)
-	defer w.Close()
 
 	fileType := getFileType(optimizeOption.Format)
 	switch fileType {
@@ -174,16 +165,53 @@ func convertImage(
 	}
 
 	if err != nil {
-		return originalImage, nil
+		return nil
 		// return nil, err
 	}
 
 	err = webp.Encode(w, img, nil)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
-	return resultImage, nil
+	return nil
+}
+
+func imageResize(
+	ctx context.Context,
+	r io.Reader,
+	w io.Writer,
+	optimizeOption *optimizeOption,
+) error {
+	convertArgs := []string{}
+	convertArgs = append(convertArgs, "-") // input stream
+	if optimizeOption.IsReduce {
+		convertArgs = append(convertArgs, "-strip", "-interlace", "Plane", "-gaussian-blur", "0.05", "-quality", "85%")
+	}
+
+	width := strconv.Itoa(optimizeOption.Width)
+	height := strconv.Itoa(optimizeOption.Height)
+	if optimizeOption.Width > 0 && optimizeOption.Height <= 0 {
+		convertArgs = append(convertArgs, "-resize", width)
+	} else if optimizeOption.Width > 0 && optimizeOption.Height > 0 {
+		convertArgs = append(convertArgs, "-resize", width+"x"+height+"!")
+	}
+
+	convertArgs = append(convertArgs, "-") // output stream
+
+	var stderr bytes.Buffer
+	// Use - as input and output to use stdin and stdout.
+	cmd := exec.Command("convert", convertArgs...)
+	cmd.Stdin = r
+	cmd.Stdout = w
+	cmd.Stderr = &stderr
+	
+	if err := cmd.Run(); err != nil {
+		log.Println(stderr.String())
+		return err
+	}
+
+	return nil
 }
 
 func imageProcess( //using imagick
@@ -267,28 +295,40 @@ func ReceiveHttp(w http.ResponseWriter, r *http.Request) {
 
 	optimizedFileName := strings.Join([]string{optimizedFilePrefix, option.getFilename(imageName)}, "/")
 
-	existFileReader, err := bucket.Object(optimizedFileName).NewReader(context.Background())
+	existFileObject := bucket.Object(optimizedFileName)
+	existFileReader, err := existFileObject.NewReader(context.Background())
 	if err == nil {
 		defer existFileReader.Close()
 		io.Copy(w, existFileReader)
 	} else {
-		var result *storage.ObjectHandle
-		var err error
+		originalImage := bucket.Object(imageName)
+		
+		originalImageReader, err := originalImage.NewReader(context.Background())
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		var buffer bytes.Buffer
+		bufferWriter := bufio.NewWriter(&buffer)
+		bufferReader := bufio.NewReader(&buffer)
+		
 		if isGif {
-			result, err = gif2mp4(context.Background(), imageName, optimizedFileName)
+			_, err = gif2mp4(context.Background(), imageName, optimizedFileName)
 		} else {
 			// result, err = imageProcess(context.Background(), imageName, optimizedFileName, option)
-			result, err = convertImage(context.Background(), imageName, optimizedFileName, option)
+			err = convertImage(context.Background(), originalImageReader, bufferWriter, option)
+			// imageResize(context.Background(), bufferReader, bufferWriter, option)
 		}		
 		
 		if err != nil {
 			log.Fatal(err)
 		}
-		
-		resultReader, _ := result.NewReader(context.Background())
-		defer resultReader.Close()
 
-		io.Copy(w, resultReader)
+		gcsFileWriter := existFileObject.NewWriter(context.Background())
+		defer gcsFileWriter.Close()
+
+		result := io.TeeReader(bufferReader, gcsFileWriter)
+		io.Copy(w, result)
 	}
 }
 
