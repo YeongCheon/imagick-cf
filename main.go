@@ -22,6 +22,7 @@ import (
 	"golang.org/x/image/tiff"
 	"golang.org/x/image/bmp"
 	"bufio"
+	"errors"
 )
 
 const (
@@ -137,30 +138,20 @@ func convertImage(
 	fileType := getFileType(optimizeOption.Format)
 	switch fileType {
 	case JPG:
-		err = jpeg.Encode(w, img, nil)
+		return jpeg.Encode(w, img, nil)
 	case PNG:
-		err = png.Encode(w, img)
+		return png.Encode(w, img)
 	case WEBP:
-		err = webp.Encode(w, img, nil)
+		return webp.Encode(w, img, nil)
 	case GIF:
-		err = gif.Encode(w, img, nil)
+		return gif.Encode(w, img, nil)
 	case BMP:
-		err = bmp.Encode(w, img)
+		return bmp.Encode(w, img)
 	case TIFF:
-		err = tiff.Encode(w, img, nil)
+		return tiff.Encode(w, img, nil)
+	default:
+		return errors.New("unknown file type")
 	}
-
-	if err != nil {
-		return nil
-		// return nil, err
-	}
-
-	err = webp.Encode(w, img, nil)
-	if err != nil {
-		return err
-	}
-
-	return nil
 }
 
 func imageResize(
@@ -314,16 +305,20 @@ func ReceiveHttp(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				log.Fatal(err)
 			}
+			resizeImageBufferWriter.Flush()
 			
-			var convertImageBuffer bytes.Buffer
-			convertImageBufferWriter := bufio.NewWriter(&convertImageBuffer)
-			convertBufferReader := bufio.NewReader(&convertImageBuffer)
+			// var convertImageBuffer bytes.Buffer
+			convertImageBuffer := bytes.NewBuffer([]byte{})
+			convertImageBufferWriter := bufio.NewWriter(convertImageBuffer)
+			convertBufferReader := bufio.NewReader(convertImageBuffer)
+
 			
 			err = convertImage(context.Background(), resizeBufferReader, convertImageBufferWriter, option)
 			if err != nil {
 				log.Fatal(err)
 			}
-
+			convertImageBufferWriter.Flush()
+			
 			io.Copy(resultImageBufferWriter, convertBufferReader)
 		}		
 		
@@ -334,6 +329,7 @@ func ReceiveHttp(w http.ResponseWriter, r *http.Request) {
 		gcsFileWriter := existFileObject.NewWriter(context.Background())
 		defer gcsFileWriter.Close()
 
+		resultImageBufferWriter.Flush()
 		result := io.TeeReader(resultBufferReader, gcsFileWriter)
 		io.Copy(w, result)
 	}
