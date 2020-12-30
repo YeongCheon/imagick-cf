@@ -103,36 +103,22 @@ func init() {
 // deprecated
 func gif2mp4(
 	ctx context.Context,
-	originalImageName string,
-	outputImageName string,
-) (*storage.ObjectHandle, error) {
-	originalImage := bucket.Object(originalImageName)
-	r, err := originalImage.NewReader(context.Background())
-	if err != nil {
-		return nil, err
-	}
-
-	resultImage := bucket.Object(outputImageName)	
-	w := resultImage.NewWriter(ctx)
-	defer resultImage.Update(context.Background(), storage.ObjectAttrsToUpdate{
-		ContentType: "video/mp4",
-		ContentDisposition: "",
-		// Metadata: metadata,
-	})
-	defer w.Close()
+	r io.Reader,
+	w io.Writer,
+) error {
 	var stderr bytes.Buffer
 
-	cmd := exec.Command("ffmpeg", "-f", "image2pipe", "-i", "pipe:0", "-movflags", "faststart", "-pix_fmt", "yuv420p", "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2", "-f", "ismv", "pipe:1")
+	cmd := exec.Command("ffmpeg", "-f", "image2pipe", "-i", "pipe:0", "-movflags", "faststart", "-pix_fmt", "yuv420p", "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2", "-f", "h264", "pipe:1")
 	cmd.Stdin = r
 	cmd.Stdout = w
 	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
 		log.Println(stderr.String())
-		return nil, err
+		return err
 	}
 
-	return resultImage, nil
+	return nil
 }
 
 
@@ -311,7 +297,13 @@ func ReceiveHttp(w http.ResponseWriter, r *http.Request) {
 		resultBufferReader := bufio.NewReader(&resultImageBuffer)
 		
 		if isGif {
-			_, err = gif2mp4(context.Background(), imageName, optimizedFileName)
+			err = gif2mp4(context.Background(), originalImageReader, resultImageBufferWriter)
+
+			defer existFileObject.Update(context.Background(), storage.ObjectAttrsToUpdate{
+				ContentType: "video/mp4",
+				ContentDisposition: "",
+				// Metadata: metadata,
+			})
 		} else {
 			// result, err = imageProcess(context.Background(), imageName, optimizedFileName, option)
 			var resizeImageBuffer bytes.Buffer
