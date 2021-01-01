@@ -240,6 +240,51 @@ func imageProcess( //using imagick
 	return resultImage, nil
 }
 
+func optimizeImage(
+	ctx context.Context,
+	r io.Reader,
+	w io.Writer,
+) error {	
+	const WIDTH = 1024
+
+	img, _, err := image.Decode(r)
+	if err != nil {
+		return err
+	}
+
+	var webpBuf bytes.Buffer
+	err = webp.Encode(&webpBuf, img, nil)
+	if err != nil {
+		return err
+	}
+
+	bounds := img.Bounds()
+	width := bounds.Max.X
+	// height := bounds.Max.Y
+
+	convertArgs := []string{}
+	convertArgs = append(convertArgs, "-") // input stream
+	convertArgs = append(convertArgs, "-strip", "-interlace", "Plane", "-gaussian-blur", "0.05", "-quality", "85%")
+	if width > 1024 {
+		convertArgs = append(convertArgs, "-resize", strconv.Itoa(WIDTH))
+	}
+	convertArgs = append(convertArgs, "-") // output stream
+
+	var stderr bytes.Buffer
+	// Use - as input and output to use stdin and stdout.
+	cmd := exec.Command("convert", convertArgs...)
+	cmd.Stdin = &webpBuf
+	cmd.Stdout = w
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		log.Println(stderr.String())
+		return err
+	}
+
+	return nil
+}
+
 func ReceiveHttp(w http.ResponseWriter, r *http.Request) {
 	imageName := strings.TrimPrefix(r.URL.Path, "/")
 	query := r.URL.Query()
@@ -286,8 +331,10 @@ func ReceiveHttp(w http.ResponseWriter, r *http.Request) {
 		var resultImageBuffer bytes.Buffer
 		resultImageBufferWriter := bufio.NewWriter(&resultImageBuffer)
 		resultBufferReader := bufio.NewReader(&resultImageBuffer)
-		
-		if isGif {
+
+		if option.IsReduce {
+			err = optimizeImage(context.Background(), originalImageReader, resultImageBufferWriter)
+		} else if isGif {
 			err = gif2mp4(context.Background(), originalImageReader, resultImageBufferWriter)
 
 			defer existFileObject.Update(context.Background(), storage.ObjectAttrsToUpdate{
