@@ -239,7 +239,7 @@ func imageProcess( //using imagick
 	return resultImage, nil
 }
 
-func optimizeImage(
+func reduceImage(
 	ctx context.Context,
 	r io.Reader,
 	w io.Writer,
@@ -283,7 +283,7 @@ func optimizeImage(
 	return nil
 }
 
-func ReceiveHttp(w http.ResponseWriter, r *http.Request) {
+func OptimizeImage(w http.ResponseWriter, r *http.Request) {
 	imageName := strings.TrimPrefix(r.URL.Path, "/")
 	query := r.URL.Query()
 	format := query.Get("format")
@@ -331,7 +331,7 @@ func ReceiveHttp(w http.ResponseWriter, r *http.Request) {
 		resultBufferReader := bufio.NewReader(&resultImageBuffer)
 
 		if option.IsReduce {
-			err = optimizeImage(context.Background(), originalImageReader, resultImageBufferWriter)
+			err = reduceImage(context.Background(), originalImageReader, resultImageBufferWriter)
 		} else if isGif {
 			err = gif2mp4(context.Background(), originalImageReader, resultImageBufferWriter)
 

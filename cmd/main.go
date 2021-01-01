@@ -10,7 +10,7 @@ import (
 
 func main() {
 	ctx := context.Background()
-	if err := funcframework.RegisterHTTPFunctionContext(ctx, "/", imageickcf.ReceiveHttp); err != nil {
+	if err := funcframework.RegisterHTTPFunctionContext(ctx, "/", imageickcf.OptimizeImage); err != nil {
 		log.Fatalf("funcframework.RegisterHTTPFunctionContext: %v\n", err)
 	}
 	// Use PORT environment variable, or default to 8080.
