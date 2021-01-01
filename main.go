@@ -128,14 +128,13 @@ func convertImage(
 	ctx context.Context,
 	r io.Reader,
 	w io.Writer,
-	optimizeOption *optimizeOption,
+	fileType FileType,
 ) error {
 	img, _, err := image.Decode(r)
 	if err != nil {
 		return err
 	}
 
-	fileType := getFileType(optimizeOption.Format)
 	switch fileType {
 	case JPG:
 		return jpeg.Encode(w, img, nil)
@@ -260,7 +259,6 @@ func optimizeImage(
 
 	bounds := img.Bounds()
 	width := bounds.Max.X
-	// height := bounds.Max.Y
 
 	convertArgs := []string{}
 	convertArgs = append(convertArgs, "-") // input stream
@@ -359,8 +357,9 @@ func ReceiveHttp(w http.ResponseWriter, r *http.Request) {
 			convertImageBufferWriter := bufio.NewWriter(convertImageBuffer)
 			convertBufferReader := bufio.NewReader(convertImageBuffer)
 
-			
-			err = convertImage(context.Background(), resizeBufferReader, convertImageBufferWriter, option)
+
+			fileType := getFileType(option.Format)
+			err = convertImage(context.Background(), resizeBufferReader, convertImageBufferWriter, fileType)
 			if err != nil {
 				log.Fatal(err)
 			}
