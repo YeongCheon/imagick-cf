@@ -280,7 +280,6 @@ func reduceImage(
 
 	rForSize, _  := originalFile.NewReader(ctx)
 	width, err := getImageWidth(ctx, rForSize)
-	log.Println(width)
 	if err != nil {
 		return nil
 	}
@@ -289,7 +288,7 @@ func reduceImage(
 
 	rForResize, _ := originalFile.NewReader(ctx)
 	var resizeBuf bytes.Buffer
-	err = imageResize(context.Background(), rForResize, w, minWidth, 0) // cloud function convert command is not support webp format.
+	err = imageResize(context.Background(), rForResize, &resizeBuf, minWidth, 0) // cloud function convert command is not support webp format.
 	if err != nil {
 		return err
 	}
