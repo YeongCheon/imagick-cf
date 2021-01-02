@@ -102,7 +102,6 @@ func init() {
 	bucket = storageClient.Bucket(bucketName)
 }
 
-// deprecated
 func gif2mp4(
 	ctx context.Context,
 	r io.Reader,
@@ -110,15 +109,33 @@ func gif2mp4(
 ) error {
 	var stderr bytes.Buffer
 
-	cmd := exec.Command("ffmpeg", "-f", "image2pipe", "-i", "pipe:0", "-movflags", "faststart", "-pix_fmt", "yuv420p", "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2", "-f", "h264", "pipe:1")
-	cmd.Stdin = r
-	cmd.Stdout = w
+	gifFile, err := os.Create("/tmp/tmpGifFile.gif")
+	if err != nil {
+		return err
+	}
+	defer gifFile.Close()
+	io.Copy(gifFile, r)
+
+	outputFileName := "/tmp/resultMp4File.mp4"
+
+	// ffmpeg -i animated.gif -movflags faststart -pix_fmt yuv420p -vf "scale=trunc(iw/2)*2:trunc(ih/2)*2" video.mp4
+	cmd := exec.Command("ffmpeg", "-i", gifFile.Name(), "-movflags", "faststart", "-pix_fmt", "yuv420p", "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2", outputFileName)
+
+	// cmd := exec.Command("ffmpeg", "-f", "image2pipe", "-i", "pipe:0", "-movflags", "faststart", "-pix_fmt", "yuv420p", "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2", "-f", "h264", "pipe:1")
+	// cmd.Stdout = w
 	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
 		log.Println(stderr.String())
 		return err
 	}
+
+	resultMp4File, err := os.Open(outputFileName)
+	if err != nil {
+		return err
+	}
+
+	io.Copy(w, resultMp4File)
 
 	return nil
 }
@@ -319,7 +336,7 @@ func OptimizeImage(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	existFileObject := bucket.Object(optimizedFileName+"temp")
+	existFileObject := bucket.Object(optimizedFileName)
 	existFileReader, err := existFileObject.NewReader(context.Background())
 	if err == nil {
 		defer existFileReader.Close()
@@ -336,16 +353,16 @@ func OptimizeImage(w http.ResponseWriter, r *http.Request) {
 		resultImageBufferWriter := bufio.NewWriter(&resultImageBuffer)
 		resultBufferReader := bufio.NewReader(&resultImageBuffer)
 
-		if option.IsReduce {
-			err = reduceImage(context.Background(), originalImage, resultImageBufferWriter)
-		} else if isGif {
+		if isGif {
 			err = gif2mp4(context.Background(), originalImageReader, resultImageBufferWriter)
-
+			
 			defer existFileObject.Update(context.Background(), storage.ObjectAttrsToUpdate{
 				ContentType: "video/mp4",
 				ContentDisposition: "",
 				// Metadata: metadata,
 			})
+		} else if option.IsReduce {
+			err = reduceImage(context.Background(), originalImage, resultImageBufferWriter)
 		} else {
 			// result, err = imageProcess(context.Background(), imageName, optimizedFileName, option)
 			var resizeImageBuffer bytes.Buffer
