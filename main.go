@@ -23,6 +23,7 @@ import (
 	"golang.org/x/image/bmp"
 	"bufio"
 	"errors"
+	"math"
 )
 
 const (
@@ -157,18 +158,18 @@ func imageResize(
 	ctx context.Context,
 	r io.Reader,
 	w io.Writer,
-	optimizeOption *optimizeOption,
+	width,
+	height int,
 ) error {
 	convertArgs := []string{}
 	convertArgs = append(convertArgs, "-") // input stream
 
-	width := strconv.Itoa(optimizeOption.Width)
-	height := strconv.Itoa(optimizeOption.Height)
-
-	if optimizeOption.Width > 0 && optimizeOption.Height <= 0 {
-		convertArgs = append(convertArgs, "-resize", width)
-	} else if optimizeOption.Width > 0 && optimizeOption.Height > 0 {
-		convertArgs = append(convertArgs, "-resize", width+"x"+height+"!")
+	widthStr := strconv.Itoa(width)
+	heightStr := strconv.Itoa(height)
+	if width > 0 && height <= 0 {
+		convertArgs = append(convertArgs, "-resize", widthStr)
+	} else if width > 0 && height > 0 {
+		convertArgs = append(convertArgs, "-resize", widthStr+"x"+heightStr+"!")
 	}
 
 	convertArgs = append(convertArgs, "-") // output stream
@@ -239,48 +240,44 @@ func imageProcess( //using imagick
 	return resultImage, nil
 }
 
-func reduceImage(
+func getImageWidth(
 	ctx context.Context,
 	r io.Reader,
+) (int, error) {
+	imgConfig, _, err := image.DecodeConfig(r)
+	if err != nil {
+		return 0, err
+	}
+
+	
+	return imgConfig.Width, nil
+}
+
+func reduceImage(
+	ctx context.Context,
+	originalFile *storage.ObjectHandle,
+	// r io.Reader,
 	w io.Writer,
-) error {	
+) error {
 	const WIDTH = 1024
 
-	img, _, err := image.Decode(r)
+	rForSize, _  := originalFile.NewReader(ctx)
+	width, err := getImageWidth(ctx, rForSize)
+	log.Println(width)
+	if err != nil {
+		return nil
+	}
+	
+	minWidth := int(math.Min(float64(WIDTH), float64(width)))
+
+	rForResize, _ := originalFile.NewReader(ctx)
+	var resizeBuf bytes.Buffer
+	err = imageResize(context.Background(), rForResize, w, minWidth, 0) // cloud function convert command is not support webp format.
 	if err != nil {
 		return err
 	}
 
-	var webpBuf bytes.Buffer
-	err = webp.Encode(&webpBuf, img, nil)
-	if err != nil {
-		return err
-	}
-
-	bounds := img.Bounds()
-	width := bounds.Max.X
-
-	convertArgs := []string{}
-	convertArgs = append(convertArgs, "-") // input stream
-	convertArgs = append(convertArgs, "-strip", "-interlace", "Plane", "-gaussian-blur", "0.05", "-quality", "85%")
-	if width > 1024 {
-		convertArgs = append(convertArgs, "-resize", strconv.Itoa(WIDTH))
-	}
-	convertArgs = append(convertArgs, "-") // output stream
-
-	var stderr bytes.Buffer
-	// Use - as input and output to use stdin and stdout.
-	cmd := exec.Command("convert", convertArgs...)
-	cmd.Stdin = &webpBuf
-	cmd.Stdout = w
-	cmd.Stderr = &stderr
-
-	if err := cmd.Run(); err != nil {
-		log.Println(stderr.String())
-		return err
-	}
-
-	return nil
+	return convertImage(ctx, &resizeBuf, w, WEBP) 
 }
 
 func OptimizeImage(w http.ResponseWriter, r *http.Request) {
@@ -313,7 +310,16 @@ func OptimizeImage(w http.ResponseWriter, r *http.Request) {
 
 	optimizedFileName := strings.Join([]string{optimizedFilePrefix, option.getFilename(imageName)}, "/")
 
-	existFileObject := bucket.Object(optimizedFileName)
+	originalImage := bucket.Object(imageName)
+	originalImageReader, err := originalImage.NewReader(context.Background())
+
+	defer func() {
+		if r := recover(); r != nil {
+			io.Copy(w, originalImageReader)
+		}
+	}()
+
+	existFileObject := bucket.Object(optimizedFileName+"temp")
 	existFileReader, err := existFileObject.NewReader(context.Background())
 	if err == nil {
 		defer existFileReader.Close()
@@ -331,7 +337,7 @@ func OptimizeImage(w http.ResponseWriter, r *http.Request) {
 		resultBufferReader := bufio.NewReader(&resultImageBuffer)
 
 		if option.IsReduce {
-			err = reduceImage(context.Background(), originalImageReader, resultImageBufferWriter)
+			err = reduceImage(context.Background(), originalImage, resultImageBufferWriter)
 		} else if isGif {
 			err = gif2mp4(context.Background(), originalImageReader, resultImageBufferWriter)
 
@@ -346,7 +352,7 @@ func OptimizeImage(w http.ResponseWriter, r *http.Request) {
 			resizeImageBufferWriter := bufio.NewWriter(&resizeImageBuffer)
 			resizeBufferReader := bufio.NewReader(&resizeImageBuffer)
 
-			err = imageResize(context.Background(), originalImageReader, resizeImageBufferWriter, option) // warning: this function must be first. if not, result buffer bytes size is zero.
+			err = imageResize(context.Background(), originalImageReader, resizeImageBufferWriter, option.Width, option.Height) // warning: this function must be first. if not, result buffer bytes size is zero.
 			if err != nil {
 				log.Fatal(err)
 			}
