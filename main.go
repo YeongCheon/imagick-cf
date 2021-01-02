@@ -365,12 +365,12 @@ func OptimizeImage(w http.ResponseWriter, r *http.Request) {
 				// Metadata: metadata,
 			})
 		} else if option.IsReduce {
-			result, err := reduceImage(context.Background(), originalImage)
+			reduceResult, err := reduceImage(context.Background(), originalImage)
 			if err != nil {
 				panic(err)
 			}
 
-			io.Copy(w, result)
+			io.Copy(resultImageBufferWriter, reduceResult)
 		} else {
 			var tmp *bytes.Buffer
 
@@ -394,10 +394,6 @@ func OptimizeImage(w http.ResponseWriter, r *http.Request) {
 
 			io.Copy(resultImageBufferWriter, tmp)
 		}		
-		
-		if err != nil {
-			log.Fatal(err)
-		}
 
 		gcsFileWriter := existFileObject.NewWriter(context.Background())
 		defer gcsFileWriter.Close()
