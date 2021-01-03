@@ -111,6 +111,102 @@ func init() {
 	bucket = storageClient.Bucket(bucketName)
 }
 
+func OptimizeImage(w http.ResponseWriter, r *http.Request) {
+	imageName := strings.TrimPrefix(r.URL.Path, "/")
+	query := r.URL.Query()
+	format := query.Get("format")
+	isOptimize, isOk := strconv.ParseBool(query.Get("optimize"))
+	width, _ := strconv.Atoi(query.Get("width"))
+	height, _ := strconv.Atoi(query.Get("height"))
+
+	if !contains(allowedFormatList, format) {
+		format = ""
+	}
+
+	option := &optimizeOption{
+		Format:   format,
+		IsReduce: isOptimize && isOk == nil,
+		Width:    width,
+		Height:   height,
+	}
+
+	optimizedFileName := strings.Join([]string{optimizedFilePrefix, option.getFilename(imageName)}, "/")
+
+	originalImage := bucket.Object(imageName)
+	originalImageReader, err := originalImage.NewReader(context.Background())
+	if err != nil {
+		panic(err)
+	}
+
+	if option.isEmpty() {
+		io.Copy(w, originalImageReader)
+		return
+	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			io.Copy(w, originalImageReader)
+		}
+	}()
+
+	existFileObject := bucket.Object(optimizedFileName)
+	existFileReader, err := existFileObject.NewReader(context.Background())
+	if err == nil {
+		defer existFileReader.Close()
+		io.Copy(w, existFileReader)
+	} else {
+		var resultImageBuffer bytes.Buffer
+		resultImageBufferWriter := bufio.NewWriter(&resultImageBuffer)
+		resultBufferReader := bufio.NewReader(&resultImageBuffer)
+
+		if option.Format == "mp4" {
+			err = gif2mp4(context.Background(), originalImageReader, resultImageBufferWriter)
+			
+			defer existFileObject.Update(context.Background(), storage.ObjectAttrsToUpdate{
+				ContentType: "video/mp4",
+				ContentDisposition: "",
+				// Metadata: metadata,
+			})
+		} else if option.IsReduce {
+			reduceResult, err := reduceImage(context.Background(), originalImage)
+			if err != nil {
+				panic(err)
+			}
+
+			io.Copy(resultImageBufferWriter, reduceResult)
+		} else {
+			var tmp *bytes.Buffer
+
+			if option.Width <= 0 && option.Height <= 0 {
+				tmp, err = imageResize(context.Background(), originalImageReader, option.Width, option.Height) // warning: this function must be first. if not, result buffer bytes size is zero.
+				if err != nil {
+					log.Fatal(err)
+				}
+			} else {
+				originalBytes, _ := ioutil.ReadAll(originalImageReader)
+				tmp = bytes.NewBuffer(originalBytes)
+			}
+
+			if option.Format != "" {
+				fileType := getFileType(option.Format)
+				tmp, err = convertImage(context.Background(), tmp, fileType)
+				if err != nil {
+					log.Fatal(err)
+				}
+			}			
+
+			io.Copy(resultImageBufferWriter, tmp)
+		}		
+
+		gcsFileWriter := existFileObject.NewWriter(context.Background())
+		defer gcsFileWriter.Close()
+
+		resultImageBufferWriter.Flush()
+		result := io.TeeReader(resultBufferReader, gcsFileWriter)
+		io.Copy(w, result)
+	}
+}
+
 func gif2mp4(
 	ctx context.Context,
 	r io.Reader,
@@ -219,57 +315,6 @@ func imageResize(
 	return &w, nil
 }
 
-func imageProcess( //using imagick
-	ctx context.Context,
-	originalImageName,
-	outputImageName string,
-	optimizeOption *optimizeOption,
-) (*storage.ObjectHandle, error) {
-	originalImage := bucket.Object(originalImageName)
-	r, err := originalImage.NewReader(context.Background())
-	if err != nil {
-		return nil, err
-	}
-
-	resultImage := bucket.Object(outputImageName)
-	w := resultImage.NewWriter(ctx)
-	defer w.Close()
-
-	convertArgs := []string{}
-	convertArgs = append(convertArgs, "-") // input stream
-	if optimizeOption.IsReduce {
-		convertArgs = append(convertArgs, "-strip", "-interlace", "Plane", "-gaussian-blur", "0.05", "-quality", "85%")
-	}
-
-	width := strconv.Itoa(optimizeOption.Width)
-	height := strconv.Itoa(optimizeOption.Height)
-	if optimizeOption.Width > 0 && optimizeOption.Height <= 0 {
-		convertArgs = append(convertArgs, "-resize", width)
-	} else if optimizeOption.Width > 0 && optimizeOption.Height > 0 {
-		convertArgs = append(convertArgs, "-resize", width+"x"+height+"!")
-	}
-
-	if optimizeOption.Format != "" {
-		convertArgs = append(convertArgs, optimizeOption.Format+":-")
-	} else {
-		convertArgs = append(convertArgs, "-")
-	}
-
-	var stderr bytes.Buffer
-	// Use - as input and output to use stdin and stdout.
-	cmd := exec.Command("convert", convertArgs...)
-	cmd.Stdin = r
-	cmd.Stdout = w
-	cmd.Stderr = &stderr
-
-	if err := cmd.Run(); err != nil {
-		log.Println(stderr.String())
-		return nil, err
-	}
-
-	return resultImage, nil
-}
-
 func getImageWidth(
 	ctx context.Context,
 	r io.Reader,
@@ -306,102 +351,6 @@ func reduceImage(
 	}
 
 	return convertImage(ctx, resizeBuf, WEBP) 
-}
-
-func OptimizeImage(w http.ResponseWriter, r *http.Request) {
-	imageName := strings.TrimPrefix(r.URL.Path, "/")
-	query := r.URL.Query()
-	format := query.Get("format")
-	isOptimize, isOk := strconv.ParseBool(query.Get("optimize"))
-	width, _ := strconv.Atoi(query.Get("width"))
-	height, _ := strconv.Atoi(query.Get("height"))
-
-	if !contains(allowedFormatList, format) {
-		format = ""
-	}
-
-	option := &optimizeOption{
-		Format:   format,
-		IsReduce: isOptimize && isOk == nil,
-		Width:    width,
-		Height:   height,
-	}
-
-	optimizedFileName := strings.Join([]string{optimizedFilePrefix, option.getFilename(imageName)}, "/")
-
-	originalImage := bucket.Object(imageName)
-	originalImageReader, err := originalImage.NewReader(context.Background())
-	if err != nil {
-		panic(err)
-	}
-
-	if option.isEmpty() {
-		io.Copy(w, originalImageReader)
-		return
-	}
-
-	defer func() {
-		if r := recover(); r != nil {
-			io.Copy(w, originalImageReader)
-		}
-	}()
-
-	existFileObject := bucket.Object(optimizedFileName)
-	existFileReader, err := existFileObject.NewReader(context.Background())
-	if err == nil {
-		defer existFileReader.Close()
-		io.Copy(w, existFileReader)
-	} else {
-		var resultImageBuffer bytes.Buffer
-		resultImageBufferWriter := bufio.NewWriter(&resultImageBuffer)
-		resultBufferReader := bufio.NewReader(&resultImageBuffer)
-
-		if option.Format == "mp4" {
-			err = gif2mp4(context.Background(), originalImageReader, resultImageBufferWriter)
-			
-			defer existFileObject.Update(context.Background(), storage.ObjectAttrsToUpdate{
-				ContentType: "video/mp4",
-				ContentDisposition: "",
-				// Metadata: metadata,
-			})
-		} else if option.IsReduce {
-			reduceResult, err := reduceImage(context.Background(), originalImage)
-			if err != nil {
-				panic(err)
-			}
-
-			io.Copy(resultImageBufferWriter, reduceResult)
-		} else {
-			var tmp *bytes.Buffer
-
-			if option.Width <= 0 && option.Height <= 0 {
-				tmp, err = imageResize(context.Background(), originalImageReader, option.Width, option.Height) // warning: this function must be first. if not, result buffer bytes size is zero.
-				if err != nil {
-					log.Fatal(err)
-				}
-			} else {
-				originalBytes, _ := ioutil.ReadAll(originalImageReader)
-				tmp = bytes.NewBuffer(originalBytes)
-			}
-
-			if option.Format != "" {
-				fileType := getFileType(option.Format)
-				tmp, err = convertImage(context.Background(), tmp, fileType)
-				if err != nil {
-					log.Fatal(err)
-				}
-			}			
-
-			io.Copy(resultImageBufferWriter, tmp)
-		}		
-
-		gcsFileWriter := existFileObject.NewWriter(context.Background())
-		defer gcsFileWriter.Close()
-
-		resultImageBufferWriter.Flush()
-		result := io.TeeReader(resultBufferReader, gcsFileWriter)
-		io.Copy(w, result)
-	}
 }
 
 func contains(arr []string, value string) bool {
