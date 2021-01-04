@@ -177,7 +177,7 @@ func OptimizeImage(w http.ResponseWriter, r *http.Request) {
 		} else {
 			var tmp *bytes.Buffer
 
-			if option.Width <= 0 && option.Height <= 0 {
+			if option.Width > 0 {
 				tmp, err = imageResize(context.Background(), originalImageReader, option.Width, option.Height) // warning: this function must be first. if not, result buffer bytes size is zero.
 				if err != nil {
 					log.Fatal(err)
