@@ -287,6 +287,7 @@ func imageResize(
 ) (*bytes.Buffer, error) {
 	convertArgs := []string{}
 	convertArgs = append(convertArgs, "-") // input stream
+	convertArgs = append(convertArgs, "-auto-orient")
 
 	widthStr := strconv.Itoa(width)
 	heightStr := strconv.Itoa(height)
