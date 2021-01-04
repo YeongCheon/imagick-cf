@@ -30,6 +30,7 @@ import (
 const (
 	bucketName          = "BUCKET_NAME"
 	optimizedFilePrefix = "optimize"
+	cacheMaxAge = 31536000
 )
 
 var (
@@ -138,6 +139,7 @@ func OptimizeImage(w http.ResponseWriter, r *http.Request) {
 		panic(err)
 	}
 
+	w.Header().Set("Cache-Control", "max-age="+strconv.Itoa(cacheMaxAge))
 	if option.isEmpty() {
 		io.Copy(w, originalImageReader)
 		return
