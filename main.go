@@ -1,7 +1,7 @@
 package imageickcf
 
 import (
-	"cloud.google.com/go/storage"
+	"bytes"
 	"context"
 	"crypto/sha1"
 	"fmt"
@@ -12,18 +12,20 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
-	"bytes"
 
+	"cloud.google.com/go/storage"
+
+	"bufio"
+	"errors"
 	"image"
 	"image/gif"
 	"image/jpeg"
 	"image/png"
-	"github.com/chai2010/webp"
-	"golang.org/x/image/tiff"
-	"golang.org/x/image/bmp"
-	"bufio"
-	"errors"
 	"math"
+
+	"github.com/chai2010/webp"
+	"golang.org/x/image/bmp"
+	"golang.org/x/image/tiff"
 )
 
 const (
