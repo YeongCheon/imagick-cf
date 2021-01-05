@@ -24,7 +24,6 @@ import (
 	"bufio"
 	"errors"
 	"math"
-	"io/ioutil"
 )
 
 const (
