@@ -196,12 +196,12 @@ func OptimizeImage(w http.ResponseWriter, r *http.Request) {
 			io.Copy(resultImageBufferWriter, tmp)
 		}		
 
-		gcsFileWriter := existFileObject.NewWriter(context.Background())
-		defer gcsFileWriter.Close()
+		// gcsFileWriter := existFileObject.NewWriter(context.Background())
+		// defer gcsFileWriter.Close()
 
 		resultImageBufferWriter.Flush()
-		result := io.TeeReader(resultBufferReader, gcsFileWriter)
-		io.Copy(w, result)
+		// result := io.TeeReader(resultBufferReader, gcsFileWriter)
+		io.Copy(w, resultBufferReader)
 	}
 }
 
