@@ -29,6 +29,8 @@ import (
 )
 
 const (
+	limitWidth= 16000
+	limitHeight= 16000
 	bucketName          = "BUCKET_NAME"
 	optimizedFilePrefix = "optimize"
 	cacheMaxAge = 31536000
@@ -132,8 +134,6 @@ func OptimizeImage(w http.ResponseWriter, r *http.Request) {
 		Height:   height,
 	}
 
-	optimizedFileName := strings.Join([]string{optimizedFilePrefix, option.getFilename(imageName)}, "/")
-
 	originalImage := bucket.Object(imageName)
 	originalImageReader, err := originalImage.NewReader(context.Background())
 	if err != nil {
@@ -152,57 +152,55 @@ func OptimizeImage(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	existFileObject := bucket.Object(optimizedFileName)
-	existFileReader, err := existFileObject.NewReader(context.Background())
-	if err == nil {
-		defer existFileReader.Close()
-		io.Copy(w, existFileReader)
+	var resultImageBuffer bytes.Buffer
+	resultImageBufferWriter := bufio.NewWriter(&resultImageBuffer)
+	resultBufferReader := bufio.NewReader(&resultImageBuffer)
+
+	rForSize, _  := originalImage.NewReader(context.Background())
+	width, height, err = getImageWidthHeight(context.Background(), rForSize)
+	if width > limitWidth || height > limitHeight {
+		io.Copy(w, originalImageReader)
+		return
+	}
+
+	if option.Format == "mp4" {
+		err = gif2mp4(context.Background(), originalImageReader, resultImageBufferWriter)
+	} else if option.IsReduce {
+		reduceResult, err := reduceImage(
+			context.Background(),
+			originalImage,
+			width,
+		)
+		if err != nil {
+			panic(err)
+		}
+
+		io.Copy(resultImageBufferWriter, reduceResult)
 	} else {
-		var resultImageBuffer bytes.Buffer
-		resultImageBufferWriter := bufio.NewWriter(&resultImageBuffer)
-		resultBufferReader := bufio.NewReader(&resultImageBuffer)
+		var tmp *bytes.Buffer
 
-		if option.Format == "mp4" {
-			err = gif2mp4(context.Background(), originalImageReader, resultImageBufferWriter)
-			
-			defer existFileObject.Update(context.Background(), storage.ObjectAttrsToUpdate{
-				ContentType: "video/mp4",
-				ContentDisposition: "",
-				// Metadata: metadata,
-			})
-		} else if option.IsReduce {
-			reduceResult, err := reduceImage(context.Background(), originalImage)
-			if err != nil {
-				panic(err)
-			}
+		tmp, err = imageResize(context.Background(), originalImageReader, option.Width, option.Height) // warning: this function must be first. if not, result buffer bytes size is zero.
+		if err != nil {
+			log.Fatal(err)
+		}
 
-			io.Copy(resultImageBufferWriter, reduceResult)
-		} else {
-			var tmp *bytes.Buffer
-
-			tmp, err = imageResize(context.Background(), originalImageReader, option.Width, option.Height) // warning: this function must be first. if not, result buffer bytes size is zero.
+		if option.Format != "" {
+			fileType := getFileType(option.Format)
+			tmp, err = convertImage(context.Background(), tmp, fileType)
 			if err != nil {
 				log.Fatal(err)
 			}
+		}			
 
-			if option.Format != "" {
-				fileType := getFileType(option.Format)
-				tmp, err = convertImage(context.Background(), tmp, fileType)
-				if err != nil {
-					log.Fatal(err)
-				}
-			}			
+		io.Copy(resultImageBufferWriter, tmp)
+	}		
 
-			io.Copy(resultImageBufferWriter, tmp)
-		}		
-
-		// gcsFileWriter := existFileObject.NewWriter(context.Background())
-		// defer gcsFileWriter.Close()
-
-		resultImageBufferWriter.Flush()
-		// result := io.TeeReader(resultBufferReader, gcsFileWriter)
-		io.Copy(w, resultBufferReader)
-	}
+	// gcsFileWriter := existFileObject.NewWriter(context.Background())
+	// defer gcsFileWriter.Close()
+	
+	resultImageBufferWriter.Flush()
+	// result := io.TeeReader(resultBufferReader, gcsFileWriter)
+	io.Copy(w, resultBufferReader)
 }
 
 func gif2mp4(
@@ -296,7 +294,6 @@ func imageResize(
 	}
 
 	convertArgs = append(convertArgs, "-") // output stream
-
 	
 	var w bytes.Buffer
 	var stderr bytes.Buffer
@@ -314,31 +311,26 @@ func imageResize(
 	return &w, nil
 }
 
-func getImageWidth(
+func getImageWidthHeight(
 	ctx context.Context,
 	r io.Reader,
-) (int, error) {
+) (int, int, error) {
 	imgConfig, _, err := image.DecodeConfig(r)
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 	
-	return imgConfig.Width, nil
+	return imgConfig.Width, imgConfig.Height, nil
 }
 
 func reduceImage(
 	ctx context.Context,
 	originalFile *storage.ObjectHandle,
+	width int,
 	// r io.Reader,
 	// w io.Writer,
 ) (*bytes.Buffer, error) {
 	const WIDTH = 1024
-
-	rForSize, _  := originalFile.NewReader(ctx)
-	width, err := getImageWidth(ctx, rForSize)
-	if err != nil {
-		return nil, err
-	}
 	
 	minWidth := int(math.Min(float64(WIDTH), float64(width)))
 
