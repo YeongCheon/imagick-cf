@@ -29,11 +29,11 @@ import (
 )
 
 const (
-	limitWidth= 16000
-	limitHeight= 16000
+	limitWidth          = 16000
+	limitHeight         = 16000
 	bucketName          = "BUCKET_NAME"
 	optimizedFilePrefix = "optimize"
-	cacheMaxAge = 31536000
+	cacheMaxAge         = 31536000
 )
 
 var (
@@ -87,9 +87,9 @@ func (option *optimizeOption) getHash(originalFileName string) string {
 func (option *optimizeOption) getFilename(originalFileName string) string {
 	var result string
 	if strings.HasSuffix(strings.ToLower(originalFileName), "gif") {
-		return option.getHash(originalFileName)+".mp4"
+		return option.getHash(originalFileName) + ".mp4"
 	}
-	
+
 	if option.Format == "" {
 		arr := strings.Split(originalFileName, ".")
 		if len(arr) > 1 {
@@ -156,7 +156,7 @@ func OptimizeImage(w http.ResponseWriter, r *http.Request) {
 	resultImageBufferWriter := bufio.NewWriter(&resultImageBuffer)
 	resultBufferReader := bufio.NewReader(&resultImageBuffer)
 
-	rForSize, _  := originalImage.NewReader(context.Background())
+	rForSize, _ := originalImage.NewReader(context.Background())
 	width, height, err = getImageWidthHeight(context.Background(), rForSize)
 	if width > limitWidth || height > limitHeight {
 		io.Copy(w, originalImageReader)
@@ -190,14 +190,14 @@ func OptimizeImage(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				log.Fatal(err)
 			}
-		}			
+		}
 
 		io.Copy(resultImageBufferWriter, tmp)
-	}		
+	}
 
 	// gcsFileWriter := existFileObject.NewWriter(context.Background())
 	// defer gcsFileWriter.Close()
-	
+
 	resultImageBufferWriter.Flush()
 	// result := io.TeeReader(resultBufferReader, gcsFileWriter)
 	io.Copy(w, resultBufferReader)
@@ -240,7 +240,6 @@ func gif2mp4(
 
 	return nil
 }
-
 
 // original: https://github.com/dawnlabs/photosorcery/blob/master/convert.go
 func convertImage(
@@ -294,7 +293,7 @@ func imageResize(
 	}
 
 	convertArgs = append(convertArgs, "-") // output stream
-	
+
 	var w bytes.Buffer
 	var stderr bytes.Buffer
 	// Use - as input and output to use stdin and stdout.
@@ -302,7 +301,7 @@ func imageResize(
 	cmd.Stdin = r
 	cmd.Stdout = &w
 	cmd.Stderr = &stderr
-	
+
 	if err := cmd.Run(); err != nil {
 		log.Println(stderr.String())
 		return nil, err
@@ -319,7 +318,7 @@ func getImageWidthHeight(
 	if err != nil {
 		return 0, 0, err
 	}
-	
+
 	return imgConfig.Width, imgConfig.Height, nil
 }
 
@@ -331,7 +330,7 @@ func reduceImage(
 	// w io.Writer,
 ) (*bytes.Buffer, error) {
 	const WIDTH = 1024
-	
+
 	minWidth := int(math.Min(float64(WIDTH), float64(width)))
 
 	rForResize, _ := originalFile.NewReader(ctx)
@@ -341,7 +340,7 @@ func reduceImage(
 		return nil, err
 	}
 
-	return convertImage(ctx, resizeBuf, WEBP) 
+	return convertImage(ctx, resizeBuf, WEBP)
 }
 
 func contains(arr []string, value string) bool {
