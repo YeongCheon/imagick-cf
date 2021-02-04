@@ -135,7 +135,7 @@ func OptimizeImage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	originalImage := bucket.Object(imageName)
-	originalImageReader, err := originalImage.NewReader(context.Background())
+	originalImageReader, err := originalImage.NewReader(r.Context())
 	if err != nil {
 		panic(err)
 	}
@@ -148,6 +148,8 @@ func OptimizeImage(w http.ResponseWriter, r *http.Request) {
 
 	defer func() {
 		if r := recover(); r != nil {
+			msg := fmt.Sprintf("%v", r)
+			http.Error(w, msg, http.StatusBadRequest)
 			io.Copy(w, originalImageReader)
 		}
 	}()
@@ -156,18 +158,18 @@ func OptimizeImage(w http.ResponseWriter, r *http.Request) {
 	resultImageBufferWriter := bufio.NewWriter(&resultImageBuffer)
 	resultBufferReader := bufio.NewReader(&resultImageBuffer)
 
-	rForSize, _ := originalImage.NewReader(context.Background())
-	width, height, err = getImageWidthHeight(context.Background(), rForSize)
+	rForSize, _ := originalImage.NewReader(r.Context())
+	width, height, err = getImageWidthHeight(r.Context(), rForSize)
 	if width > limitWidth || height > limitHeight {
 		io.Copy(w, originalImageReader)
 		return
 	}
 
 	if option.Format == "mp4" {
-		err = gif2mp4(context.Background(), originalImageReader, resultImageBufferWriter)
+		err = gif2mp4(r.Context(), originalImageReader, resultImageBufferWriter)
 	} else if option.IsReduce {
 		reduceResult, err := reduceImage(
-			context.Background(),
+			r.Context(),
 			originalImage,
 			width,
 		)
@@ -179,16 +181,16 @@ func OptimizeImage(w http.ResponseWriter, r *http.Request) {
 	} else {
 		var tmp *bytes.Buffer
 
-		tmp, err = imageResize(context.Background(), originalImageReader, option.Width, option.Height) // warning: this function must be first. if not, result buffer bytes size is zero.
+		tmp, err = imageResize(r.Context(), originalImageReader, option.Width, option.Height) // warning: this function must be first. if not, result buffer bytes size is zero.
 		if err != nil {
-			log.Fatal(err)
+			panic(err)
 		}
 
 		if option.Format != "" {
 			fileType := getFileType(option.Format)
-			tmp, err = convertImage(context.Background(), tmp, fileType)
+			tmp, err = convertImage(r.Context(), tmp, fileType)
 			if err != nil {
-				log.Fatal(err)
+				panic(err)
 			}
 		}
 
@@ -227,7 +229,7 @@ func gif2mp4(
 	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
-		log.Println(stderr.String())
+		fmt.Fprintln(os.Stderr, stderr.String())
 		return err
 	}
 
@@ -303,8 +305,7 @@ func imageResize(
 	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
-		log.Println(stderr.String())
-		return nil, err
+		panic(err)
 	}
 
 	return &w, nil
@@ -335,7 +336,7 @@ func reduceImage(
 
 	rForResize, _ := originalFile.NewReader(ctx)
 	// var resizeBuf bytes.Buffer
-	resizeBuf, err := imageResize(context.Background(), rForResize, minWidth, 0) // cloud function convert command is not support webp format.
+	resizeBuf, err := imageResize(ctx, rForResize, minWidth, 0) // cloud function convert command is not support webp format.
 	if err != nil {
 		return nil, err
 	}
