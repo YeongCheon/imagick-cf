@@ -141,7 +141,7 @@ func OptimizeImage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Cache-Control", "public,max-age="+strconv.Itoa(cacheMaxAge))
-	if option.isEmpty() {
+	if option.isEmpty() || strings.HasSuffix(strings.ToLower(imageName), "webp") {
 		io.Copy(w, originalImageReader)
 		return
 	}
