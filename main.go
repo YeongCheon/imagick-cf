@@ -140,7 +140,7 @@ func OptimizeImage(w http.ResponseWriter, r *http.Request) {
 		panic(err)
 	}
 
-	w.Header().Set("Cache-Control", "max-age="+strconv.Itoa(cacheMaxAge))
+	w.Header().Set("Cache-Control", "public,max-age="+strconv.Itoa(cacheMaxAge))
 	if option.isEmpty() {
 		io.Copy(w, originalImageReader)
 		return
