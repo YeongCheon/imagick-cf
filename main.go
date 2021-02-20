@@ -24,8 +24,10 @@ import (
 	"math"
 
 	"github.com/chai2010/webp"
+	"github.com/mssola/user_agent"
 	"golang.org/x/image/bmp"
 	"golang.org/x/image/tiff"
+	"io/ioutil"
 )
 
 const (
@@ -34,6 +36,9 @@ const (
 	bucketName          = "BUCKET_NAME"
 	optimizedFilePrefix = "optimize"
 	cacheMaxAge         = 31536000
+	contentTypeWebp     = "image/webp"
+	contentTypeGif      = "image/gif"
+	userAgentIos        = "iPhone OS"
 )
 
 var (
@@ -115,6 +120,16 @@ func init() {
 	bucket = storageClient.Bucket(bucketName)
 }
 
+func isSupportWebp(r *http.Request) bool {
+	userAgent := user_agent.New(r.UserAgent())
+	browser, browserVersion := userAgent.Browser()
+
+	isSafari := browser == "Safari"
+	ver, verErr := strconv.ParseFloat(browserVersion, 32)
+
+	return !(isSafari && verErr == nil && ver <= 13) // ios 13 이하 버전 이외에는 모두 webp를 지원하는걸로 간주한다.
+}
+
 func OptimizeImage(w http.ResponseWriter, r *http.Request) {
 	imageName := strings.TrimPrefix(r.URL.Path, "/")
 	query := r.URL.Query()
@@ -135,13 +150,19 @@ func OptimizeImage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	originalImage := bucket.Object(imageName)
+	attrs, err := originalImage.Attrs(r.Context())
+	if err != nil {
+		panic(err)
+	}
+	isWebp := attrs.ContentType == contentTypeWebp
+	isGif := attrs.ContentType == contentTypeGif
 	originalImageReader, err := originalImage.NewReader(r.Context())
 	if err != nil {
 		panic(err)
 	}
 
 	w.Header().Set("Cache-Control", "public,max-age="+strconv.Itoa(cacheMaxAge))
-	if option.isEmpty() || strings.HasSuffix(strings.ToLower(imageName), "webp") {
+	if option.isEmpty() || (isGif && option.IsReduce) {
 		io.Copy(w, originalImageReader)
 		return
 	}
@@ -169,7 +190,8 @@ func OptimizeImage(w http.ResponseWriter, r *http.Request) {
 		err = gif2mp4(r.Context(), originalImageReader, resultImageBufferWriter)
 	} else if option.IsReduce {
 		reduceResult, err := reduceImage(
-			r.Context(),
+			r,
+			isWebp,
 			originalImage,
 			width,
 		)
@@ -324,24 +346,48 @@ func getImageWidthHeight(
 }
 
 func reduceImage(
-	ctx context.Context,
+	r *http.Request,
+	isWebp bool,
 	originalFile *storage.ObjectHandle,
 	width int,
 	// r io.Reader,
 	// w io.Writer,
 ) (*bytes.Buffer, error) {
 	const WIDTH = 1024
-
 	minWidth := int(math.Min(float64(WIDTH), float64(width)))
+	ctx := r.Context()
 
-	rForResize, _ := originalFile.NewReader(ctx)
-	// var resizeBuf bytes.Buffer
-	resizeBuf, err := imageResize(ctx, rForResize, minWidth, 0) // cloud function convert command is not support webp format.
-	if err != nil {
-		return nil, err
+	if isWebp && isSupportWebp(r) { // webp를 지원하고 이미지가 webp인 경우엔 그냥 반환.
+		originalImageReader, _ := originalFile.NewReader(ctx)
+		b, _ := ioutil.ReadAll(originalImageReader)
+		return bytes.NewBuffer(b), nil
+	} else if isWebp && !isSupportWebp(r) { // webp를 지원하지 않는데 원본이 webp일 경우엔 jpg 변환, 리사이징 후 반환
+		originalImageReader, _ := originalFile.NewReader(ctx)
+		convertBuf, err := convertImage(ctx, originalImageReader, getFileType("jpg"))
+		if err != nil {
+			return nil, err
+		}
+
+		return imageResize(ctx, convertBuf, minWidth, 0)
+	} else if !isWebp && isSupportWebp(r) { // webp를 지원하지만 원본이 webp가 아닐 경우 리사이징, webp 변환 후 반환
+		rForResize, _ := originalFile.NewReader(ctx)
+		// var resizeBuf bytes.Buffer
+		resizeBuf, err := imageResize(ctx, rForResize, minWidth, 0) // cloud function convert command is not support webp format.
+		if err != nil {
+			return nil, err
+		}
+		// tmp, err = convertImage(r.Context(), originalImageReader, getFileType("webp"))
+
+		return convertImage(ctx, resizeBuf, WEBP)
+	} else if !isWebp && isSupportWebp(r) { // webp를 지원하지 않고, 원본이 webp가 아닐 경우엔 리사이징만 진행
+		rForResize, _ := originalFile.NewReader(ctx)
+		// var resizeBuf bytes.Buffer
+		return imageResize(ctx, rForResize, minWidth, 0) // cloud function convert command is not support webp format.
+	} else { // 그 이외의 경우엔 원본 반환
+		originalImageReader, _ := originalFile.NewReader(ctx)
+		b, _ := ioutil.ReadAll(originalImageReader)
+		return bytes.NewBuffer(b), nil
 	}
-
-	return convertImage(ctx, resizeBuf, WEBP)
 }
 
 func contains(arr []string, value string) bool {
