@@ -24,10 +24,9 @@ import (
 	"math"
 
 	"github.com/chai2010/webp"
-	"github.com/mssola/user_agent"
+	"github.com/disintegration/imaging"
 	"golang.org/x/image/bmp"
 	"golang.org/x/image/tiff"
-	"io/ioutil"
 )
 
 const (
@@ -38,7 +37,6 @@ const (
 	cacheMaxAge         = 31536000
 	contentTypeWebp     = "image/webp"
 	contentTypeGif      = "image/gif"
-	userAgentIos        = "iPhone OS"
 )
 
 var (
@@ -60,6 +58,7 @@ var (
 type optimizeOption struct {
 	Format   string
 	IsReduce bool
+	IsResize bool
 	Width    int
 	Height   int
 }
@@ -120,23 +119,14 @@ func init() {
 	bucket = storageClient.Bucket(bucketName)
 }
 
-func isSupportWebp(r *http.Request) bool {
-	userAgent := user_agent.New(r.UserAgent())
-	browser, browserVersion := userAgent.Browser()
-
-	isSafari := browser == "Safari"
-	ver, verErr := strconv.ParseFloat(browserVersion, 32)
-
-	return !(isSafari && verErr == nil && ver <= 13) // ios 13 이하 버전 이외에는 모두 webp를 지원하는걸로 간주한다.
-}
-
 func OptimizeImage(w http.ResponseWriter, r *http.Request) {
 	imageName := strings.TrimPrefix(r.URL.Path, "/")
 	query := r.URL.Query()
 	format := query.Get("format")
-	isOptimize, isOk := strconv.ParseBool(query.Get("optimize"))
-	width, _ := strconv.Atoi(query.Get("width"))
-	height, _ := strconv.Atoi(query.Get("height"))
+	isOptimize, isOptimizeOk := strconv.ParseBool(query.Get("optimize"))
+	isOptimizeSize, isOptimizeSizeOk := strconv.ParseBool(query.Get("optimizeSize"))
+	originalImageWidth, _ := strconv.Atoi(query.Get("width"))
+	originalImageHeight, _ := strconv.Atoi(query.Get("height"))
 
 	if !contains(allowedFormatList, format) {
 		format = ""
@@ -144,9 +134,10 @@ func OptimizeImage(w http.ResponseWriter, r *http.Request) {
 
 	option := &optimizeOption{
 		Format:   format,
-		IsReduce: isOptimize && isOk == nil,
-		Width:    width,
-		Height:   height,
+		IsReduce: isOptimize && isOptimizeOk == nil,
+		IsResize: isOptimizeSize && isOptimizeSizeOk == nil,
+		Width:    originalImageWidth,
+		Height:   originalImageHeight,
 	}
 
 	originalImage := bucket.Object(imageName)
@@ -154,7 +145,6 @@ func OptimizeImage(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		panic(err)
 	}
-	isWebp := attrs.ContentType == contentTypeWebp
 	isGif := attrs.ContentType == contentTypeGif
 	originalImageReader, err := originalImage.NewReader(r.Context())
 	if err != nil {
@@ -180,8 +170,8 @@ func OptimizeImage(w http.ResponseWriter, r *http.Request) {
 	resultBufferReader := bufio.NewReader(&resultImageBuffer)
 
 	rForSize, _ := originalImage.NewReader(r.Context())
-	width, height, err = getImageWidthHeight(r.Context(), rForSize)
-	if width > limitWidth || height > limitHeight {
+	originalImageWidth, originalImageHeight, err = getImageWidthHeight(r.Context(), rForSize)
+	if originalImageWidth > limitWidth || originalImageHeight > limitHeight {
 		io.Copy(w, originalImageReader)
 		return
 	}
@@ -189,38 +179,49 @@ func OptimizeImage(w http.ResponseWriter, r *http.Request) {
 	if option.Format == "mp4" {
 		err = gif2mp4(r.Context(), originalImageReader, resultImageBufferWriter)
 	} else if option.IsReduce {
-		reduceResult, err := reduceImage(
-			r,
-			isWebp,
-			originalImage,
-			width,
-		)
-		if err != nil {
-			panic(err)
-		}
-
-		io.Copy(resultImageBufferWriter, reduceResult)
-	} else {
-		var tmp *bytes.Buffer
-
-		tmp, err = imageResize(r.Context(), originalImageReader, option.Width, option.Height) // warning: this function must be first. if not, result buffer bytes size is zero.
-		if err != nil {
-			panic(err)
-		}
-
-		if option.Format != "" {
-			fileType := getFileType(option.Format)
-			tmp, err = convertImage(r.Context(), tmp, fileType)
-			if err != nil {
-				panic(err)
-			}
-		}
-
-		io.Copy(resultImageBufferWriter, tmp)
+		minWidth := int(math.Min(float64(1024), float64(originalImageWidth)))
+		option.Width = minWidth
+		option.Format = "webp"
+	} else if option.IsResize {
+		minWidth := int(math.Min(float64(1024), float64(originalImageWidth)))
+		option.Width = minWidth
 	}
 
-	// gcsFileWriter := existFileObject.NewWriter(context.Background())
-	// defer gcsFileWriter.Close()
+	var tmp bytes.Buffer
+
+	img, err := imaging.Decode(originalImageReader, imaging.AutoOrientation(true))
+	if err != nil {
+		panic(err)
+	}
+
+	resizeImg := imaging.Resize(img, option.Width, option.Height, imaging.Lanczos)
+	var fileType FileType
+
+	if option.Format != "" {
+		fileType = getFileType(option.Format)
+	} else {
+		fileType = getFileTypeFromContentType(attrs.ContentType)
+		log.Printf("fileType: %d", fileType)
+	}
+
+	switch fileType {
+	case JPG:
+		err = jpeg.Encode(&tmp, resizeImg, nil)
+	case PNG:
+		err = png.Encode(&tmp, resizeImg)
+	case WEBP:
+		err = webp.Encode(&tmp, resizeImg, nil)
+	case GIF:
+		err = gif.Encode(&tmp, resizeImg, nil)
+	case BMP:
+		err = bmp.Encode(&tmp, resizeImg)
+	case TIFF:
+		err = tiff.Encode(&tmp, resizeImg, nil)
+	default:
+		panic("unknown file type")
+	}
+
+	io.Copy(resultImageBufferWriter, &tmp)
 
 	resultImageBufferWriter.Flush()
 	// result := io.TeeReader(resultBufferReader, gcsFileWriter)
@@ -298,41 +299,6 @@ func convertImage(
 	return &w, nil
 }
 
-func imageResize(
-	ctx context.Context,
-	r io.Reader,
-	width,
-	height int,
-) (*bytes.Buffer, error) {
-	convertArgs := []string{}
-	convertArgs = append(convertArgs, "-") // input stream
-	convertArgs = append(convertArgs, "-auto-orient")
-
-	widthStr := strconv.Itoa(width)
-	heightStr := strconv.Itoa(height)
-	if width > 0 && height <= 0 {
-		convertArgs = append(convertArgs, "-resize", widthStr)
-	} else if width > 0 && height > 0 {
-		convertArgs = append(convertArgs, "-resize", widthStr+"x"+heightStr+"!")
-	}
-
-	convertArgs = append(convertArgs, "-") // output stream
-
-	var w bytes.Buffer
-	var stderr bytes.Buffer
-	// Use - as input and output to use stdin and stdout.
-	cmd := exec.Command("convert", convertArgs...)
-	cmd.Stdin = r
-	cmd.Stdout = &w
-	cmd.Stderr = &stderr
-
-	if err := cmd.Run(); err != nil {
-		panic(err)
-	}
-
-	return &w, nil
-}
-
 func getImageWidthHeight(
 	ctx context.Context,
 	r io.Reader,
@@ -343,51 +309,6 @@ func getImageWidthHeight(
 	}
 
 	return imgConfig.Width, imgConfig.Height, nil
-}
-
-func reduceImage(
-	r *http.Request,
-	isWebp bool,
-	originalFile *storage.ObjectHandle,
-	width int,
-	// r io.Reader,
-	// w io.Writer,
-) (*bytes.Buffer, error) {
-	const WIDTH = 1024
-	minWidth := int(math.Min(float64(WIDTH), float64(width)))
-	ctx := r.Context()
-
-	if isWebp && isSupportWebp(r) { // webp를 지원하고 이미지가 webp인 경우엔 그냥 반환.
-		originalImageReader, _ := originalFile.NewReader(ctx)
-		b, _ := ioutil.ReadAll(originalImageReader)
-		return bytes.NewBuffer(b), nil
-	} else if isWebp && !isSupportWebp(r) { // webp를 지원하지 않는데 원본이 webp일 경우엔 jpg 변환, 리사이징 후 반환
-		originalImageReader, _ := originalFile.NewReader(ctx)
-		convertBuf, err := convertImage(ctx, originalImageReader, getFileType("jpg"))
-		if err != nil {
-			return nil, err
-		}
-
-		return imageResize(ctx, convertBuf, minWidth, 0)
-	} else if !isWebp && isSupportWebp(r) { // webp를 지원하지만 원본이 webp가 아닐 경우 리사이징, webp 변환 후 반환
-		rForResize, _ := originalFile.NewReader(ctx)
-		// var resizeBuf bytes.Buffer
-		resizeBuf, err := imageResize(ctx, rForResize, minWidth, 0) // cloud function convert command is not support webp format.
-		if err != nil {
-			return nil, err
-		}
-		// tmp, err = convertImage(r.Context(), originalImageReader, getFileType("webp"))
-
-		return convertImage(ctx, resizeBuf, WEBP)
-	} else if !isWebp && isSupportWebp(r) { // webp를 지원하지 않고, 원본이 webp가 아닐 경우엔 리사이징만 진행
-		rForResize, _ := originalFile.NewReader(ctx)
-		// var resizeBuf bytes.Buffer
-		return imageResize(ctx, rForResize, minWidth, 0) // cloud function convert command is not support webp format.
-	} else { // 그 이외의 경우엔 원본 반환
-		originalImageReader, _ := originalFile.NewReader(ctx)
-		b, _ := ioutil.ReadAll(originalImageReader)
-		return bytes.NewBuffer(b), nil
-	}
 }
 
 func contains(arr []string, value string) bool {
@@ -425,6 +346,25 @@ func getFileType(input string) FileType {
 	case "webp":
 		return WEBP
 	case "tiff":
+		return TIFF
+	default:
+		return ERR
+	}
+}
+
+func getFileTypeFromContentType(contentType string) FileType {
+	switch contentType {
+	case "image/jpg":
+		fallthrough
+	case "image/jpeg":
+		return JPG
+	case "image/gif":
+		return GIF
+	case "image/bmp":
+		return BMP
+	case "image/webp":
+		return WEBP
+	case "image/tiff":
 		return TIFF
 	default:
 		return ERR
