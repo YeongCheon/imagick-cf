@@ -66,6 +66,7 @@ type optimizeOption struct {
 func (option *optimizeOption) isEmpty() bool {
 	return option.Format == "" &&
 		!option.IsReduce &&
+		!option.IsResize &&
 		option.Width <= 0 &&
 		option.Height <= 0
 }
@@ -125,8 +126,8 @@ func OptimizeImage(w http.ResponseWriter, r *http.Request) {
 	format := query.Get("format")
 	isOptimize, isOptimizeOk := strconv.ParseBool(query.Get("optimize"))
 	isOptimizeSize, isOptimizeSizeOk := strconv.ParseBool(query.Get("optimizeSize"))
-	originalImageWidth, _ := strconv.Atoi(query.Get("width"))
-	originalImageHeight, _ := strconv.Atoi(query.Get("height"))
+	width, _ := strconv.Atoi(query.Get("width"))
+	height, _ := strconv.Atoi(query.Get("height"))
 
 	if !contains(allowedFormatList, format) {
 		format = ""
@@ -136,8 +137,8 @@ func OptimizeImage(w http.ResponseWriter, r *http.Request) {
 		Format:   format,
 		IsReduce: isOptimize && isOptimizeOk == nil,
 		IsResize: isOptimizeSize && isOptimizeSizeOk == nil,
-		Width:    originalImageWidth,
-		Height:   originalImageHeight,
+		Width:    width,
+		Height:   height,
 	}
 
 	originalImage := bucket.Object(imageName)
@@ -152,6 +153,7 @@ func OptimizeImage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Cache-Control", "public,max-age="+strconv.Itoa(cacheMaxAge))
+
 	if option.isEmpty() || (isGif && option.IsReduce) {
 		io.Copy(w, originalImageReader)
 		return
@@ -170,7 +172,7 @@ func OptimizeImage(w http.ResponseWriter, r *http.Request) {
 	resultBufferReader := bufio.NewReader(&resultImageBuffer)
 
 	rForSize, _ := originalImage.NewReader(r.Context())
-	originalImageWidth, originalImageHeight, err = getImageWidthHeight(r.Context(), rForSize)
+	originalImageWidth, originalImageHeight, err := getImageWidthHeight(r.Context(), rForSize)
 	if originalImageWidth > limitWidth || originalImageHeight > limitHeight {
 		io.Copy(w, originalImageReader)
 		return
@@ -182,6 +184,7 @@ func OptimizeImage(w http.ResponseWriter, r *http.Request) {
 		minWidth := int(math.Min(float64(1024), float64(originalImageWidth)))
 		option.Width = minWidth
 		option.Format = "webp"
+
 	} else if option.IsResize {
 		minWidth := int(math.Min(float64(1024), float64(originalImageWidth)))
 		option.Width = minWidth
@@ -201,7 +204,6 @@ func OptimizeImage(w http.ResponseWriter, r *http.Request) {
 		fileType = getFileType(option.Format)
 	} else {
 		fileType = getFileTypeFromContentType(attrs.ContentType)
-		log.Printf("fileType: %d", fileType)
 	}
 
 	switch fileType {
