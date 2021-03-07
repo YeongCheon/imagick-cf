@@ -179,7 +179,9 @@ func OptimizeImage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if isGif && option.Format == "mp4" {
-		err = gif2mp4(r.Context(), originalImageReader, w)
+		fmt.Println()
+		fileName := strings.Split(originalImage.ObjectName(), ".")[0]
+		err = gif2mp4(r.Context(), fileName, originalImageReader, w)
 		return
 	} else if option.IsReduce {
 		minWidth := int(math.Min(float64(1024), float64(originalImageWidth)))
@@ -233,19 +235,23 @@ func OptimizeImage(w http.ResponseWriter, r *http.Request) {
 
 func gif2mp4(
 	ctx context.Context,
+	fileName string,
 	r io.Reader,
 	w io.Writer,
 ) error {
+	inputFileName := fmt.Sprintf("/tmp/%s.gif", fileName)
+	outputFileName := fmt.Sprintf("/tmp/%s.mp4", fileName)
+
 	var stderr bytes.Buffer
 
-	gifFile, err := os.Create("/tmp/tmpGifFile.gif")
+	gifFile, err := os.Create(inputFileName)
 	if err != nil {
 		return err
 	}
+	defer os.Remove(inputFileName)
+	defer os.Remove(outputFileName)
 	defer gifFile.Close()
 	io.Copy(gifFile, r)
-
-	outputFileName := "/tmp/resultMp4File.mp4"
 
 	// ffmpeg -i animated.gif -movflags faststart -pix_fmt yuv420p -vf "scale=trunc(iw/2)*2:trunc(ih/2)*2" video.mp4
 	cmd := exec.Command("ffmpeg", "-i", gifFile.Name(), "-movflags", "faststart", "-pix_fmt", "yuv420p", "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2", outputFileName)
