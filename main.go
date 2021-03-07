@@ -179,7 +179,6 @@ func OptimizeImage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if isGif && option.Format == "mp4" {
-		fmt.Println("gif2mp4")
 		err = gif2mp4(r.Context(), originalImageReader, w)
 		return
 	} else if option.IsReduce {
