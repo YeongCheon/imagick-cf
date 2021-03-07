@@ -178,8 +178,10 @@ func OptimizeImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if option.Format == "mp4" {
-		err = gif2mp4(r.Context(), originalImageReader, resultImageBufferWriter)
+	if isGif && option.Format == "mp4" {
+		fmt.Println("gif2mp4")
+		err = gif2mp4(r.Context(), originalImageReader, w)
+		return
 	} else if option.IsReduce {
 		minWidth := int(math.Min(float64(1024), float64(originalImageWidth)))
 		option.Width = minWidth
