@@ -204,7 +204,6 @@ func OptimizeImage(w http.ResponseWriter, r *http.Request) {
 	resizeImg := imaging.Resize(img, option.Width, option.Height, imaging.Lanczos)
 	var fileType FileType
 
-	fmt.Println(option)
 	if option.Format != "" {
 		fileType = getFileType(option.Format)
 	} else {
@@ -348,7 +347,6 @@ const (
 )
 
 func getFileType(input string) FileType {
-	fmt.Println(input)
 	switch input {
 	case "jpg":
 		fallthrough
@@ -360,6 +358,8 @@ func getFileType(input string) FileType {
 		return BMP
 	case "webp":
 		return WEBP
+	case "png":
+		return PNG
 	case "tiff":
 		return TIFF
 	case "ico":
