@@ -23,6 +23,7 @@ import (
 	"image/png"
 	"math"
 
+	ico "github.com/Kodeworks/golang-image-ico"
 	"github.com/chai2010/webp"
 	"github.com/disintegration/imaging"
 	"golang.org/x/image/bmp"
@@ -52,6 +53,7 @@ var (
 		"bmp",
 		"tiff",
 		"mp4",
+		"ico",
 	}
 )
 
@@ -179,7 +181,6 @@ func OptimizeImage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if isGif && option.Format == "mp4" {
-		fmt.Println()
 		fileName := strings.Split(originalImage.ObjectName(), ".")[0]
 		err = gif2mp4(r.Context(), fileName, originalImageReader, w)
 		return
@@ -203,6 +204,7 @@ func OptimizeImage(w http.ResponseWriter, r *http.Request) {
 	resizeImg := imaging.Resize(img, option.Width, option.Height, imaging.Lanczos)
 	var fileType FileType
 
+	fmt.Println(option)
 	if option.Format != "" {
 		fileType = getFileType(option.Format)
 	} else {
@@ -222,6 +224,8 @@ func OptimizeImage(w http.ResponseWriter, r *http.Request) {
 		err = bmp.Encode(&tmp, resizeImg)
 	case TIFF:
 		err = tiff.Encode(&tmp, resizeImg, nil)
+	case ICO:
+		err = ico.Encode(&tmp, resizeImg)
 	default:
 		panic("unknown file type")
 	}
@@ -339,10 +343,12 @@ const (
 	WEBP
 	BMP
 	TIFF
+	ICO
 	ERR
 )
 
 func getFileType(input string) FileType {
+	fmt.Println(input)
 	switch input {
 	case "jpg":
 		fallthrough
@@ -356,6 +362,8 @@ func getFileType(input string) FileType {
 		return WEBP
 	case "tiff":
 		return TIFF
+	case "ico":
+		return ICO
 	default:
 		return ERR
 	}
