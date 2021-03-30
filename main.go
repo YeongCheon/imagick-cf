@@ -201,7 +201,13 @@ func OptimizeImage(w http.ResponseWriter, r *http.Request) {
 		panic(err)
 	}
 
-	resizeImg := imaging.Resize(img, option.Width, option.Height, imaging.Lanczos)
+	var resizeImg image.Image
+	if option.Width <= 0 {
+		resizeImg = img
+	} else {
+		resizeImg = imaging.Resize(img, option.Width, option.Height, imaging.Lanczos)
+	}
+
 	var fileType FileType
 
 	if option.Format != "" {
