@@ -164,6 +164,7 @@ func OptimizeImage(w http.ResponseWriter, r *http.Request) {
 	defer func() {
 		if r := recover(); r != nil {
 			msg := fmt.Sprintf("%v", r)
+			w.Header().Set("Cache-Control", "public,no-cache")
 			http.Error(w, msg, http.StatusBadRequest)
 			io.Copy(w, originalImageReader)
 		}
@@ -383,6 +384,10 @@ func getFileTypeFromContentType(contentType string) FileType {
 		return JPG
 	case "image/gif":
 		return GIF
+	case "image/png":
+		return PNG
+	case "image/ico":
+		return ICO
 	case "image/bmp":
 		return BMP
 	case "image/webp":
