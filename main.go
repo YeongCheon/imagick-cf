@@ -92,6 +92,19 @@ func OptimizeImage(w http.ResponseWriter, r *http.Request) {
 	width, _ := strconv.Atoi(query.Get("width"))
 	height, _ := strconv.Atoi(query.Get("height"))
 
+	defer func() {
+		if r := recover(); r != nil {
+			msg := fmt.Sprintf("%v", r)
+			w.Header().Set("Cache-Control", "public,no-cache")
+			http.Error(w, msg, http.StatusInternalServerError)
+		}
+	}()
+
+	defer func() {
+		r := recover()
+		fmt.Println(r)
+	}()
+
 	if !contains(allowedFormatList, format) {
 		format = ""
 	}
@@ -107,12 +120,14 @@ func OptimizeImage(w http.ResponseWriter, r *http.Request) {
 	originalImage := bucket.Object(imageName)
 	attrs, err := originalImage.Attrs(r.Context())
 	if err != nil {
-		panic(err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
 	isGif := attrs.ContentType == contentTypeGif
 	originalImageReader, err := originalImage.NewReader(r.Context())
 	if err != nil {
-		panic(err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
 
 	w.Header().Set("Cache-Control", "public,max-age="+strconv.Itoa(cacheMaxAge))
@@ -135,9 +150,9 @@ func OptimizeImage(w http.ResponseWriter, r *http.Request) {
 
 	if isGif && option.Format == "mp4" {
 		// temp diabled.
-		panic("mp4 not support yet")
-		fileName := strings.Split(originalImage.ObjectName(), ".")[0]
-		err = gif2mp4(r.Context(), fileName, originalImageReader, w)
+		// fileName := strings.Split(originalImage.ObjectName(), ".")[0]
+		// err = gif2mp4(r.Context(), fileName, originalImageReader, w)
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	} else if option.IsReduce {
 		minWidth := int(math.Min(float64(1024), float64(originalImageWidth)))
@@ -153,7 +168,8 @@ func OptimizeImage(w http.ResponseWriter, r *http.Request) {
 
 	img, err := imaging.Decode(originalImageReader, imaging.AutoOrientation(true))
 	if err != nil {
-		panic(err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
 
 	var resizeImg image.Image
@@ -189,7 +205,8 @@ func OptimizeImage(w http.ResponseWriter, r *http.Request) {
 		// err = tiff.Encode(&tmp, resizeImg, nil)
 		fallthrough
 	default:
-		panic("unknown file type")
+		http.Error(w, "unknown file type", http.StatusInternalServerError)
+		return
 	}
 
 	io.Copy(resultImageBufferWriter, &tmp)
@@ -197,6 +214,7 @@ func OptimizeImage(w http.ResponseWriter, r *http.Request) {
 	resultImageBufferWriter.Flush()
 	// result := io.TeeReader(resultBufferReader, gcsFileWriter)
 	io.Copy(w, resultBufferReader)
+	return
 }
 
 func gif2mp4(
