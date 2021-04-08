@@ -3,7 +3,7 @@ package imageickcf
 import (
 	"bytes"
 	"context"
-	"crypto/sha1"
+
 	"fmt"
 	"io"
 	"log"
@@ -16,7 +16,6 @@ import (
 	"cloud.google.com/go/storage"
 
 	"bufio"
-	"errors"
 	"image"
 	"image/gif"
 	"image/jpeg"
@@ -26,8 +25,8 @@ import (
 	ico "github.com/Kodeworks/golang-image-ico"
 	"github.com/chai2010/webp"
 	"github.com/disintegration/imaging"
-	"golang.org/x/image/bmp"
-	"golang.org/x/image/tiff"
+	// "golang.org/x/image/bmp"
+	// "golang.org/x/image/tiff"
 )
 
 const (
@@ -50,8 +49,8 @@ var (
 		"gif",
 		"png",
 		"webp",
-		"bmp",
-		"tiff",
+		// "bmp",
+		// "tiff",
 		"mp4",
 		"ico",
 	}
@@ -71,44 +70,6 @@ func (option *optimizeOption) isEmpty() bool {
 		!option.IsResize &&
 		option.Width <= 0 &&
 		option.Height <= 0
-}
-
-func (option *optimizeOption) getHash(originalFileName string) string {
-	h := sha1.New()
-
-	s := strings.Join([]string{
-		originalFileName,
-		strconv.FormatBool(option.IsReduce),
-		option.Format,
-		strconv.Itoa(option.Width),
-		strconv.Itoa(option.Height),
-	},
-		"",
-	)
-
-	h.Write([]byte(s))
-
-	return fmt.Sprintf("%x", h.Sum(nil))
-}
-
-func (option *optimizeOption) getFilename(originalFileName string) string {
-	var result string
-	if strings.HasSuffix(strings.ToLower(originalFileName), "gif") {
-		return option.getHash(originalFileName) + ".mp4"
-	}
-
-	if option.Format == "" {
-		arr := strings.Split(originalFileName, ".")
-		if len(arr) > 1 {
-			result = option.getHash(originalFileName) + "." + arr[len(arr)-1]
-		} else {
-			result = option.getHash(originalFileName)
-		}
-	} else {
-		result = option.getHash(originalFileName) + "." + option.Format
-	}
-
-	return result
 }
 
 func init() {
@@ -161,15 +122,6 @@ func OptimizeImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	defer func() {
-		if r := recover(); r != nil {
-			msg := fmt.Sprintf("%v", r)
-			w.Header().Set("Cache-Control", "public,no-cache")
-			http.Error(w, msg, http.StatusBadRequest)
-			io.Copy(w, originalImageReader)
-		}
-	}()
-
 	var resultImageBuffer bytes.Buffer
 	resultImageBufferWriter := bufio.NewWriter(&resultImageBuffer)
 	resultBufferReader := bufio.NewReader(&resultImageBuffer)
@@ -182,6 +134,8 @@ func OptimizeImage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if isGif && option.Format == "mp4" {
+		// temp diabled.
+		panic("mp4 not support yet")
 		fileName := strings.Split(originalImage.ObjectName(), ".")[0]
 		err = gif2mp4(r.Context(), fileName, originalImageReader, w)
 		return
@@ -226,12 +180,14 @@ func OptimizeImage(w http.ResponseWriter, r *http.Request) {
 		err = webp.Encode(&tmp, resizeImg, nil)
 	case GIF:
 		err = gif.Encode(&tmp, resizeImg, nil)
-	case BMP:
-		err = bmp.Encode(&tmp, resizeImg)
-	case TIFF:
-		err = tiff.Encode(&tmp, resizeImg, nil)
 	case ICO:
 		err = ico.Encode(&tmp, resizeImg)
+	case BMP:
+		// err = bmp.Encode(&tmp, resizeImg)
+		fallthrough
+	case TIFF:
+		// err = tiff.Encode(&tmp, resizeImg, nil)
+		fallthrough
 	default:
 		panic("unknown file type")
 	}
@@ -285,39 +241,6 @@ func gif2mp4(
 	return nil
 }
 
-// original: https://github.com/dawnlabs/photosorcery/blob/master/convert.go
-func convertImage(
-	ctx context.Context,
-	r io.Reader,
-	fileType FileType,
-) (*bytes.Buffer, error) {
-	img, _, err := image.Decode(r)
-	if err != nil {
-		return nil, err
-	}
-
-	var w bytes.Buffer
-
-	switch fileType {
-	case JPG:
-		jpeg.Encode(&w, img, nil)
-	case PNG:
-		png.Encode(&w, img)
-	case WEBP:
-		webp.Encode(&w, img, nil)
-	case GIF:
-		gif.Encode(&w, img, nil)
-	case BMP:
-		bmp.Encode(&w, img)
-	case TIFF:
-		tiff.Encode(&w, img, nil)
-	default:
-		return nil, errors.New("unknown file type")
-	}
-
-	return &w, nil
-}
-
 func getImageWidthHeight(
 	ctx context.Context,
 	r io.Reader,
@@ -361,16 +284,18 @@ func getFileType(input string) FileType {
 		return JPG
 	case "gif":
 		return GIF
-	case "bmp":
-		return BMP
 	case "webp":
 		return WEBP
 	case "png":
 		return PNG
-	case "tiff":
-		return TIFF
 	case "ico":
 		return ICO
+	case "bmp":
+		fallthrough
+		// return BMP
+	case "tiff":
+		fallthrough
+		// return TIFF
 	default:
 		return ERR
 	}
@@ -388,12 +313,14 @@ func getFileTypeFromContentType(contentType string) FileType {
 		return PNG
 	case "image/ico":
 		return ICO
-	case "image/bmp":
-		return BMP
 	case "image/webp":
 		return WEBP
+	case "image/bmp":
+		fallthrough
+		// return BMP
 	case "image/tiff":
-		return TIFF
+		fallthrough
+		// return TIFF
 	default:
 		return ERR
 	}
