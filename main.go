@@ -62,6 +62,7 @@ type optimizeOption struct {
 	IsResize bool
 	Width    int
 	Height   int
+	Blur     float64
 }
 
 func (option *optimizeOption) isEmpty() bool {
@@ -69,7 +70,8 @@ func (option *optimizeOption) isEmpty() bool {
 		!option.IsReduce &&
 		!option.IsResize &&
 		option.Width <= 0 &&
-		option.Height <= 0
+		option.Height <= 0 &&
+		option.Blur <= 0
 }
 
 func init() {
@@ -91,6 +93,8 @@ func OptimizeImage(w http.ResponseWriter, r *http.Request) {
 	isOptimizeSize, isOptimizeSizeOk := strconv.ParseBool(query.Get("optimizeSize"))
 	width, _ := strconv.Atoi(query.Get("width"))
 	height, _ := strconv.Atoi(query.Get("height"))
+
+	blur, blurErr := strconv.ParseFloat(query.Get("blur"), 32)
 
 	defer func() {
 		if r := recover(); r != nil {
@@ -115,6 +119,7 @@ func OptimizeImage(w http.ResponseWriter, r *http.Request) {
 		IsResize: isOptimizeSize && isOptimizeSizeOk == nil,
 		Width:    width,
 		Height:   height,
+		Blur:     blur,
 	}
 
 	originalImage := bucket.Object(imageName)
@@ -172,6 +177,10 @@ func OptimizeImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if blurErr == nil {
+		img = imaging.Blur(img, blur)
+	}
+
 	var resizeImg image.Image
 	if option.Width <= 0 {
 		resizeImg = img
@@ -182,9 +191,9 @@ func OptimizeImage(w http.ResponseWriter, r *http.Request) {
 	var fileType FileType
 
 	if option.Format != "" {
-		fileType = getFileType(option.Format)
+		fileType = getFileType(strings.ToLower(option.Format))
 	} else {
-		fileType = getFileTypeFromContentType(attrs.ContentType)
+		fileType = getFileTypeFromContentType(strings.ToLower(attrs.ContentType))
 	}
 
 	switch fileType {
