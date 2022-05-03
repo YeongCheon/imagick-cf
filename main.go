@@ -136,6 +136,7 @@ func OptimizeImage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Cache-Control", "public,max-age="+strconv.Itoa(cacheMaxAge))
+	w.Header().Set("Access-Control-Allow-Origin", "*")
 
 	if option.isEmpty() || (isGif && option.IsReduce) {
 		io.Copy(w, originalImageReader)
